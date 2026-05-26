@@ -1,3 +1,5 @@
+export const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+
 let _logout = null;
 
 export function setLogoutHandler(fn) {

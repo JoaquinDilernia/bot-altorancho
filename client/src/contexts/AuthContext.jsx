@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
+import { BASE_URL } from '../lib/api';
 
 const AuthContext = createContext(null);
 
@@ -12,7 +13,7 @@ export function AuthProvider({ children }) {
       setLoading(false);
       return;
     }
-    fetch('/api/auth/me', {
+    fetch(BASE_URL + '/api/auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => r.ok ? r.json() : Promise.reject())
@@ -25,7 +26,7 @@ export function AuthProvider({ children }) {
   }, [token]);
 
   async function login(username, password) {
-    const r = await fetch('/api/auth/login', {
+    const r = await fetch(BASE_URL + '/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),

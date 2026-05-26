@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Templates.module.css';
 
 const CATEGORIES = ['UTILITY', 'MARKETING', 'AUTHENTICATION'];
@@ -26,7 +26,7 @@ export default function Templates() {
   useEffect(() => { load(); }, []);
 
   async function load() {
-    const r = await authFetch('/api/templates');
+    const r = await authFetch(BASE_URL + '/api/templates');
     if (r.ok) setTemplates(await r.json());
   }
 
@@ -43,7 +43,7 @@ export default function Templates() {
     setSaving(true); setError('');
     try {
       const params = paramsText.split('\n').map(s => s.trim()).filter(Boolean);
-      const r = await authFetch('/api/templates', {
+      const r = await authFetch(BASE_URL + '/api/templates', {
         method: 'POST',
         body: { name: name.trim(), displayName: displayName.trim() || name.trim(), bodyText: bodyText.trim(), language, category, params },
       });

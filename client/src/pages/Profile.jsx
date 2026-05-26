@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Profile.module.css';
 
 export default function Profile() {
@@ -34,7 +34,7 @@ export default function Profile() {
         body.currentPassword = currentPassword;
         body.newPassword = newPassword;
       }
-      const r = await authFetch('/api/auth/profile', { method: 'PUT', body });
+      const r = await authFetch(BASE_URL + '/api/auth/profile', { method: 'PUT', body });
       if (!r.ok) {
         const err = await r.json();
         throw new Error(err.error ?? 'Error al guardar');

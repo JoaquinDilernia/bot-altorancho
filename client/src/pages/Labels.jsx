@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Labels.module.css';
 
 const PALETTE = [
@@ -17,7 +17,7 @@ export default function Labels() {
   useEffect(() => { loadLabels(); }, []);
 
   async function loadLabels() {
-    const r = await authFetch('/api/labels');
+    const r = await authFetch(BASE_URL + '/api/labels');
     if (r.ok) setLabels(await r.json());
   }
 
@@ -27,7 +27,7 @@ export default function Labels() {
     setSaving(true);
     setError('');
     try {
-      const r = await authFetch('/api/labels', { method: 'POST', body: { name: name.trim(), color } });
+      const r = await authFetch(BASE_URL + '/api/labels', { method: 'POST', body: { name: name.trim(), color } });
       if (!r.ok) throw new Error((await r.json()).error);
       setName('');
       await loadLabels();

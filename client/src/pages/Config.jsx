@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Config.module.css';
 
 const DAYS_ES = {
@@ -17,7 +17,7 @@ export default function Config() {
 
   async function fetchConfig() {
     try {
-      const res = await authFetch('/api/config');
+      const res = await authFetch(BASE_URL + '/api/config');
       const data = await res.json();
       setConfig(data.config);
     } finally {
@@ -29,7 +29,7 @@ export default function Config() {
     e.preventDefault();
     setSaving(true);
     try {
-      await authFetch('/api/config', {
+      await authFetch(BASE_URL + '/api/config', {
         method: 'PUT',
         body: config,
       });

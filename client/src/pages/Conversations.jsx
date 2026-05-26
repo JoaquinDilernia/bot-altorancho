@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
 import styles from './Conversations.module.css';
 
@@ -206,21 +206,21 @@ export default function Conversations() {
 
   async function loadAllLabels() {
     try {
-      const r = await authFetch('/api/labels');
+      const r = await authFetch(BASE_URL + '/api/labels');
       if (r.ok) setAllLabels(await r.json());
     } catch { /* ignore */ }
   }
 
   async function loadQuickReplies() {
     try {
-      const r = await authFetch('/api/quick-replies');
+      const r = await authFetch(BASE_URL + '/api/quick-replies');
       if (r.ok) setQuickReplies(await r.json());
     } catch { /* ignore */ }
   }
 
   async function loadTemplates() {
     try {
-      const r = await authFetch('/api/templates');
+      const r = await authFetch(BASE_URL + '/api/templates');
       if (r.ok) setTemplates(await r.json());
     } catch { /* ignore */ }
   }
@@ -241,7 +241,7 @@ export default function Conversations() {
     if (!newPhone.trim() || !newTemplate) return;
     setNewConvSaving(true); setNewConvError('');
     try {
-      const r = await authFetch('/api/conversations/start', {
+      const r = await authFetch(BASE_URL + '/api/conversations/start', {
         method: 'POST',
         body: { phone: newPhone.trim(), contactName: newName.trim() || null, templateName: newTemplate.name, language: newTemplate.language, params: newParams },
       });
@@ -259,7 +259,7 @@ export default function Conversations() {
 
   async function loadConversations() {
     try {
-      const res = await authFetch('/api/conversations');
+      const res = await authFetch(BASE_URL + '/api/conversations');
       const data = await res.json();
       const list = data.conversations ?? [];
       setConversations(list);

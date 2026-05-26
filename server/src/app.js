@@ -34,7 +34,17 @@ cron.schedule('0 * * * *', () => {
 });
 
 // Middleware
-app.use(cors());
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://gineza.techdi.com.ar',
+];
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) cb(null, true);
+    else cb(new Error('CORS not allowed'));
+  },
+  credentials: true,
+}));
 app.use(morgan('dev'));
 
 // Raw body para validación de firma Meta (debe ir antes del JSON parser)

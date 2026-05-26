@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Dashboard.module.css';
 
 export default function Dashboard() {
@@ -12,7 +12,7 @@ export default function Dashboard() {
 
   async function fetchStats() {
     try {
-      const res = await authFetch('/api/conversations');
+      const res = await authFetch(BASE_URL + '/api/conversations');
       const data = await res.json();
       const conversations = data.conversations ?? [];
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './QuickReplies.module.css';
 
 export default function QuickReplies() {
@@ -14,7 +14,7 @@ export default function QuickReplies() {
   useEffect(() => { loadReplies(); }, []);
 
   async function loadReplies() {
-    const r = await authFetch('/api/quick-replies');
+    const r = await authFetch(BASE_URL + '/api/quick-replies');
     if (r.ok) setReplies(await r.json());
   }
 
@@ -32,7 +32,7 @@ export default function QuickReplies() {
     setSaving(true);
     setError('');
     try {
-      const r = await authFetch('/api/quick-replies', {
+      const r = await authFetch(BASE_URL + '/api/quick-replies', {
         method: 'POST',
         body: { shortcut: shortcut.trim(), title: title.trim() || shortcut.trim(), text: text.trim() },
       });

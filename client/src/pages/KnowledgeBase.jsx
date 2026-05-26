@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { authFetch } from '../lib/api';
+import { authFetch, BASE_URL } from '../lib/api';
 import styles from './KnowledgeBase.module.css';
 
 const CATEGORIES = ['Info general', 'Envíos', 'Cambios y devoluciones', 'Pagos', 'Tono de marca', 'FAQs', 'Derivación', 'Otro'];
@@ -21,7 +21,7 @@ export default function KnowledgeBase() {
     setLoading(true);
     setError(null);
     try {
-      const res = await authFetch('/api/knowledge');
+      const res = await authFetch(BASE_URL + '/api/knowledge');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
       setItems(data.items ?? []);
@@ -44,7 +44,7 @@ export default function KnowledgeBase() {
           body: form,
         });
       } else {
-        res = await authFetch('/api/knowledge', {
+        res = await authFetch(BASE_URL + '/api/knowledge', {
           method: 'POST',
           body: form,
         });
