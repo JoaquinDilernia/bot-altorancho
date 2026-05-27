@@ -144,11 +144,8 @@ export function buildCustomerContext(customer) {
   if (customer.firstContactAt) lines.push(`Primera consulta: ${formatDate(customer.firstContactAt)}`);
 
   if (customer.tnOrders?.length) {
-    lines.push(`\nHistorial de compras (${customer.tnOrders.length} pedidos):`);
-    for (const o of customer.tnOrders) {
-      const prods = o.products?.join(', ') || 'sin detalle';
-      lines.push(`  • Pedido #${o.number} (${o.date ?? '?'}) — ${prods} — $${o.total} — ${o.status}`);
-    }
+    const last = customer.tnOrders[0];
+    lines.push(`Cliente recurrente: ${customer.tnOrders.length} compras previas. Última: #${last.number} (${last.date ?? '?'}) — $${last.total}.`);
   } else {
     lines.push('Sin compras registradas en Tienda Nube.');
   }

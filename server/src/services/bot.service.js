@@ -71,19 +71,24 @@ export async function processIncomingMessage(msg) {
     markWhatsAppAsRead(messageId).catch(() => {});
   }
 
-  const [conversation, history, knowledgeBase, customer, availableLabels, configDoc] = await Promise.all([
-    getOrCreateConversation(from, channel, contactName),
-    getConversationHistory(from),
-    getKnowledgeBasePrompt(),
-    getOrCreateCustomer(from, channel, contactName),
-    getAllLabels(),
-    getDb().collection('config').doc('bot_config').get(),
-  ]);
+  let conversation, history, knowledgeBase, customer, availableLabels, configDoc;
+  try {
+    [conversation, history, knowledgeBase, customer, availableLabels, configDoc] = await Promise.all([
+      getOrCreateConversation(from, channel, contactName),
+      getConversationHistory(from),
+      getKnowledgeBasePrompt().catch(() => ''),
+      getOrCreateCustomer(from, channel, contactName),
+      getAllLabels().catch(() => []),
+      getDb().collection('config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
+    ]);
+  } catch (err) {
+    console.error('[bot] Error cargando contexto para', from, err.message);
+    return;
+  }
   const botConfig = configDoc.exists ? configDoc.data() : {};
+  console.log(`[bot] Contexto cargado para ${from} — humanMode: ${conversation.humanMode}`);
 
-  enrichCustomerFromTiendaNube(from).catch(err =>
-    console.error('[bot] TN enrichment error:', err.message)
-  );
+  enrichCustomerFromTiendaNube(from).catch(() => {});
 
   if (conversation.humanMode) {
     if (text?.trim()) await appendMessage(from, { role: 'user', content: text, contactName });
@@ -157,6 +162,7 @@ export async function processIncomingMessage(msg) {
     );
   }
 
+  console.log(`[bot] Llamando a Claude para ${from}`);
   const botReply = await generateBotResponse(text ?? '', history, {
     knowledgeBase,
     orderInfo: orderInfo.orderInfo,
@@ -165,6 +171,7 @@ export async function processIncomingMessage(msg) {
     botConfig,
     imageData,
   });
+  console.log(`[bot] Claude respondió (${botReply.length} chars) para ${from}`);
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
