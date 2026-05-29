@@ -89,13 +89,15 @@ Cuando tenés información de un pedido, la compartís directamente sin pedir ve
 - El método de envío puede ser Andreani u otro — no lo inventes si no está en los datos.`;
   }
   if (availableLabels.length) {
-    prompt += `\n\n--- ETIQUETAS DISPONIBLES ---\nPodés etiquetar esta conversación usando [LABEL:nombre] en tu respuesta (el cliente no lo ve, solo el equipo). Etiquetas disponibles: ${availableLabels.join(', ')}.
-Guía de uso:
-- Usá [LABEL:Consulta] para preguntas generales sobre productos, tallas, disponibilidad.
-- Usá [LABEL:Pedido] cuando el cliente consulte sobre un pedido específico.
-- Usá [LABEL:Reclamo] si hay queja, problema o insatisfacción.
-- Usá [LABEL:Devolución] si pide cambio, devolución o reembolso.
-- Usá la etiqueta más específica disponible. Si no aplica ninguna, no etiquetes.`;
+    prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).
+Etiquetas disponibles: ${availableLabels.join(', ')}.
+Si ninguna aplica, creá una nueva con [NEW_LABEL:nombre] (ej: [NEW_LABEL:Mayorista]).
+Guía:
+- [LABEL:Consulta] → preguntas generales sobre productos, tallas, disponibilidad.
+- [LABEL:Pedido] → consulta sobre un pedido específico.
+- [LABEL:Reclamo] → queja, problema o insatisfacción.
+- [LABEL:Devolución] → cambio, devolución o reembolso.
+Podés combinar varias etiquetas si aplica.`;
   }
   return prompt;
 }

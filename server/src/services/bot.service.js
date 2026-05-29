@@ -9,7 +9,7 @@ import {
   updateAssignment,
   addLabelToConversation,
 } from './conversation.service.js';
-import { findOrder, formatOrderStatus } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, formatOrderStatus } from './tiendanube.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64 } from './meta.service.js';
 import {
   getOrCreateCustomer,
@@ -17,7 +17,7 @@ import {
   buildCustomerContext,
   linkCustomerFromOrder,
 } from './customer.service.js';
-import { getAllLabels } from './label.service.js';
+import { getAllLabels, createLabel } from './label.service.js';
 import { getDb } from './firebase.service.js';
 
 const ORDER_PATTERNS = [
@@ -25,6 +25,7 @@ const ORDER_PATTERNS = [
   /orden\s*#?\s*(\d{4,})/i,
   /compra\s*#?\s*(\d{4,})/i,
   /número\s*#?\s*(\d{4,})/i,
+  /^(\d{4,})$/,
   /tracking/i,
   /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
   /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
@@ -60,8 +61,9 @@ function parseCloseMarker(text) {
 
 function parseLabelMarkers(text) {
   const labels = [...text.matchAll(/\[LABEL:([^\]]+)\]/g)].map(m => m[1].trim());
-  const cleanText = text.replace(/\[LABEL:[^\]]+\]/g, '').trim();
-  return { labels, cleanText };
+  const newLabels = [...text.matchAll(/\[NEW_LABEL:([^\]]+)\]/g)].map(m => m[1].trim());
+  const cleanText = text.replace(/\[(NEW_)?LABEL:[^\]]+\]/g, '').trim();
+  return { labels, newLabels, cleanText };
 }
 
 export async function processIncomingMessage(msg) {
@@ -174,10 +176,14 @@ export async function processIncomingMessage(msg) {
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
-  const { labels: botLabels, cleanText } = parseLabelMarkers(textAfterClose);
+  const { labels: botLabels, newLabels: botNewLabels, cleanText } = parseLabelMarkers(textAfterClose);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
 
+  if (botNewLabels.length > 0) {
+    await Promise.all(botNewLabels.map(l => createLabel(l, '#6b7280').then(() => addLabelToConversation(from, l))));
+    console.log(`[bot] Nuevas labels creadas y aplicadas a ${from}:`, botNewLabels);
+  }
   if (botLabels.length > 0) {
     await Promise.all(botLabels.map(l => addLabelToConversation(from, l)));
     console.log(`[bot] Labels aplicadas a ${from}:`, botLabels);
@@ -206,8 +212,20 @@ export async function processIncomingMessage(msg) {
 }
 
 async function resolveOrderContext(text) {
+  const trimmed = text.trim();
+
+  // Búsqueda por email
+  if (trimmed.includes('@')) {
+    const orders = await findOrdersByEmail(trimmed);
+    if (orders.length) {
+      const summary = orders.map(o => formatOrderStatus(o)).filter(Boolean);
+      return { orderInfo: summary, tnCustomer: orders[0]?.customer ?? null };
+    }
+    return { orderInfo: null, tnCustomer: null };
+  }
+
   for (const pattern of ORDER_PATTERNS) {
-    const match = text.match(pattern);
+    const match = trimmed.match(pattern);
     if (match) {
       const orderNumber = match[1] ?? null;
       if (orderNumber) {

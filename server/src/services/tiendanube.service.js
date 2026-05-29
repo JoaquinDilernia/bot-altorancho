@@ -12,15 +12,17 @@ const client = axios.create({
 });
 
 /**
- * Busca un pedido por número o por email del cliente.
+ * Busca un pedido por número exacto o por email del cliente.
  * @param {string} query - Número de pedido o email
  * @returns {Promise<object|null>}
  */
 export async function findOrder(query) {
   try {
-    const isEmail = query.includes('@');
     const fields = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,note,created_at';
-    const params = { q: query, fields };
+    const isEmail = query.includes('@');
+    const params = isEmail
+      ? { q: query, fields }
+      : { number: query.trim(), fields };
 
     console.log('[tiendanube] findOrder params:', params);
     const { data } = await client.get('/orders', { params });
@@ -30,6 +32,22 @@ export async function findOrder(query) {
   } catch (err) {
     console.error('[tiendanube] Error buscando pedido:', err.message, err.response?.status, err.response?.data);
     return null;
+  }
+}
+
+/**
+ * Busca todos los pedidos de un cliente por email.
+ * @param {string} email
+ * @returns {Promise<Array>}
+ */
+export async function findOrdersByEmail(email) {
+  try {
+    const fields = 'id,number,status,payment_status,shipping_status,customer,products,total,created_at';
+    const { data } = await client.get('/orders', { params: { q: email, fields, per_page: 5, sort_by: 'created_at', sort_direction: 'desc' } });
+    return data ?? [];
+  } catch (err) {
+    console.error('[tiendanube] Error buscando pedidos por email:', err.message);
+    return [];
   }
 }
 
