@@ -16,6 +16,7 @@ import labelRoutes from './routes/label.routes.js';
 import statsRoutes from './routes/stats.routes.js';
 import quickReplyRoutes from './routes/quickreply.routes.js';
 import templateRoutes from './routes/template.routes.js';
+import costsRoutes from './routes/costs.routes.js';
 import { initFirebase } from './services/firebase.service.js';
 import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { requireAuth } from './middleware/requireAuth.js';
@@ -66,6 +67,7 @@ app.use('/api/labels', requireAuth, labelRoutes);
 app.use('/api/stats', requireAuth, statsRoutes);
 app.use('/api/quick-replies', requireAuth, quickReplyRoutes);
 app.use('/api/templates', requireAuth, templateRoutes);
+app.use('/api/costs', requireAuth, costsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

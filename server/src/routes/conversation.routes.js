@@ -22,6 +22,7 @@ import {
 } from '../services/meta.service.js';
 import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
+import { generateConversationSummary } from '../services/claude.service.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
@@ -234,5 +235,69 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+router.get('/:contactId/summary', async (req, res) => {
+  try {
+    const db = getDb();
+    const doc = await db.collection('conversations').doc(req.params.contactId).get();
+    if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
+    res.json({ summary: doc.data().aiSummary ?? null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:contactId/summary', async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const db = getDb();
+    const [doc, messages] = await Promise.all([
+      db.collection('conversations').doc(contactId).get(),
+      getConversationHistory(contactId),
+    ]);
+    if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
+    const convData = doc.data();
+    const metrics = calcConvMetrics(messages, convData);
+    const text = await generateConversationSummary(messages);
+    const summary = { text, generatedAt: new Date(), metrics };
+    await db.collection('conversations').doc(contactId).update({ aiSummary: summary });
+    res.json({ summary });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function calcConvMetrics(messages, convData) {
+  const responseTimes = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role !== 'user') continue;
+    const userTs = tsToMs(messages[i].timestamp);
+    if (!userTs) continue;
+    for (let j = i + 1; j < messages.length; j++) {
+      if (messages[j].role === 'user') break;
+      const replyTs = tsToMs(messages[j].timestamp);
+      if (replyTs && replyTs > userTs) { responseTimes.push(replyTs - userTs); break; }
+    }
+  }
+  const avgMs = responseTimes.length
+    ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+    : null;
+  return {
+    totalMessages: messages.length,
+    userMessages: messages.filter(m => m.role === 'user').length,
+    botMessages: messages.filter(m => m.role === 'assistant').length,
+    agentMessages: messages.filter(m => m.role === 'admin').length,
+    assignedTo: convData.assignedTo ?? null,
+    escalated: !!(convData.humanMode || convData.status === 'escalated'),
+    avgResponseTimeSec: avgMs ? Math.round(avgMs / 1000) : null,
+  };
+}
+
+function tsToMs(ts) {
+  if (!ts) return null;
+  if (ts._seconds) return ts._seconds * 1000;
+  const d = new Date(ts);
+  return isNaN(d) ? null : d.getTime();
+}
 
 export default router;

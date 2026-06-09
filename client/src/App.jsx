@@ -13,6 +13,7 @@ import Stats from './pages/Stats.jsx';
 import Login from './pages/Login.jsx';
 import QuickReplies from './pages/QuickReplies.jsx';
 import Templates from './pages/Templates.jsx';
+import Costs from './pages/Costs.jsx';
 
 export default function App() {
   return (
@@ -45,6 +46,7 @@ function AppRoutes() {
         <Route path="stats" element={<Stats />} />
         <Route path="quick-replies" element={<QuickReplies />} />
         <Route path="templates" element={<Templates />} />
+        <Route path="costs" element={<Costs />} />
       </Route>
     </Routes>
   );

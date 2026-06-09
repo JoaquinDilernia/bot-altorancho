@@ -1259,4 +1259,56 @@
 .mediaBtn:hover:not(:disabled) { background: var(--color-surface-hover); }
 .mediaBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ---- AI Summary ---- */
+.summaryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.summaryBtn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.summaryBtn:hover:not(:disabled) { background: var(--color-surface-hover); }
+.summaryBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.summaryText {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-text);
+  margin: 0 0 var(--space-2) 0;
+}
+
+.summaryMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: var(--space-1);
+}
+
+.metricChip {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.summaryTimestamp {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-muted, #9ca3af);
+  margin-top: var(--space-1);
+}
+
 .newConvSubmitBtn:disabled { opacity: 0.4; cursor: not-allowed; }

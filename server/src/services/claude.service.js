@@ -1,6 +1,24 @@
 import https from 'https';
+import { getDb } from './firebase.service.js';
 
 const MODEL = 'claude-sonnet-4-6';
+const PRICING = { inputPerMTok: 3.00, outputPerMTok: 15.00 };
+
+function logUsage(usage, type) {
+  if (!usage?.input_tokens) return;
+  const costUSD =
+    (usage.input_tokens / 1e6) * PRICING.inputPerMTok +
+    (usage.output_tokens / 1e6) * PRICING.outputPerMTok;
+  getDb().collection('usage_logs').add({
+    service: 'claude',
+    model: MODEL,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    costUSD: Math.round(costUSD * 1e6) / 1e6,
+    type,
+    createdAt: new Date(),
+  }).catch(() => {});
+}
 
 const ESCALATION_INSTRUCTIONS = `
 IMPORTANTE — ESCALADA: Si la consulta requiere atención humana, poné UNO de estos marcadores en una línea separada dentro de tu respuesta (puede ir al principio o en medio, pero NUNCA agregues texto en la misma línea del marcador — el marcador debe estar solo en su línea):
@@ -49,6 +67,28 @@ function callAnthropicAPI(payload) {
   });
 }
 
+export async function generateConversationSummary(messages) {
+  if (!messages?.length) return 'Sin mensajes para resumir.';
+  const formatted = messages
+    .map(m => {
+      const who = m.role === 'user' ? 'Cliente' : m.role === 'admin' ? 'Agente' : 'Gina (bot)';
+      return `${who}: ${m.content ?? ''}`;
+    })
+    .join('\n');
+
+  const response = await callAnthropicAPI({
+    model: MODEL,
+    max_tokens: 350,
+    system: 'Generás resúmenes breves de conversaciones de atención al cliente en español rioplatense. Respondés SOLO con el resumen, sin encabezados ni listas.',
+    messages: [{
+      role: 'user',
+      content: `Generá un resumen de 2 a 4 oraciones de esta conversación. Incluí: el motivo principal de la consulta y cómo terminó (resuelto, derivado a agente, pendiente).\n\nConversación:\n${formatted}`,
+    }],
+  });
+  logUsage(response.usage, 'summary');
+  return response.content[0].text.trim();
+}
+
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
   const { knowledgeBase = '', orderInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null } = context;
 
@@ -62,6 +102,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
     messages,
   });
 
+  logUsage(response.usage, 'bot_reply');
   return response.content[0].text;
 }
 

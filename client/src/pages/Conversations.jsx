@@ -180,6 +180,8 @@ export default function Conversations() {
   const [newParams, setNewParams] = useState([]);
   const [newConvSaving, setNewConvSaving] = useState(false);
   const [newConvError, setNewConvError] = useState('');
+  const [summary, setSummary] = useState(null);
+  const [summaryGenerating, setSummaryGenerating] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const atBottomRef = useRef(true);
@@ -203,12 +205,13 @@ export default function Conversations() {
 
   useEffect(() => {
     clearInterval(pollMsgRef.current);
-    if (!selected) { setMessages([]); setCustomer(null); return; }
+    if (!selected) { setMessages([]); setCustomer(null); setSummary(null); return; }
     selectedIdRef.current = selected.id;
     atBottomRef.current = true;
     prevMsgCountRef.current = 0;
     loadMessages(selected.id);
     loadCustomer(selected.id);
+    loadSummary(selected.id);
     markRead(selected.id);
     setLabelDropOpen(false);
     setQrOpen(false);
@@ -323,6 +326,23 @@ export default function Conversations() {
       setCustomer(data.customer ?? null);
       setNotes(data.customer?.agentNotes ?? '');
     } catch { setCustomer(null); }
+  }
+
+  async function loadSummary(contactId) {
+    try {
+      const r = await authFetch(BASE_URL + `/api/conversations/${contactId}/summary`);
+      if (r.ok) { const d = await r.json(); setSummary(d.summary ?? null); }
+      else setSummary(null);
+    } catch { setSummary(null); }
+  }
+
+  async function generateSummary() {
+    if (!selected || summaryGenerating) return;
+    setSummaryGenerating(true);
+    try {
+      const r = await authFetch(BASE_URL + `/api/conversations/${selected.id}/summary`, { method: 'POST' });
+      if (r.ok) { const d = await r.json(); setSummary(d.summary ?? null); }
+    } finally { setSummaryGenerating(false); }
   }
 
   async function markRead(contactId) {
@@ -809,6 +829,45 @@ export default function Conversations() {
                   <p className={styles.profileEmpty}>Sin historial en Tienda Nube</p>
                 </div>
               )}
+
+              <div className={styles.profileSection}>
+                <div className={styles.summaryHeader}>
+                  <span className={styles.profileSectionTitle}>Resumen IA</span>
+                  <button
+                    className={styles.summaryBtn}
+                    onClick={generateSummary}
+                    disabled={summaryGenerating}
+                  >
+                    {summaryGenerating ? '...' : summary ? '↻ Actualizar' : 'Generar'}
+                  </button>
+                </div>
+                {summary ? (
+                  <>
+                    <p className={styles.summaryText}>{summary.text}</p>
+                    <div className={styles.summaryMetrics}>
+                      <span className={styles.metricChip}>💬 {summary.metrics?.totalMessages ?? '?'} msgs</span>
+                      {summary.metrics?.agentMessages > 0 && (
+                        <span className={styles.metricChip}>👤 {summary.metrics.agentMessages} agente</span>
+                      )}
+                      {summary.metrics?.assignedTo && (
+                        <span className={styles.metricChip}>→ {summary.metrics.assignedTo}</span>
+                      )}
+                      {summary.metrics?.avgResponseTimeSec != null && (
+                        <span className={styles.metricChip}>⏱ {summary.metrics.avgResponseTimeSec}s resp.</span>
+                      )}
+                    </div>
+                    {summary.generatedAt && (
+                      <span className={styles.summaryTimestamp}>
+                        Generado {formatDate(summary.generatedAt)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <p className={styles.profileEmpty}>
+                    {summaryGenerating ? 'Generando resumen...' : 'Sin resumen. Hacé click en "Generar".'}
+                  </p>
+                )}
+              </div>
 
               <div className={styles.profileSection}>
                 <div className={styles.profileSectionTitle}>Notas del equipo</div>
