@@ -17,7 +17,7 @@ function logUsage(usage, type) {
     costUSD: Math.round(costUSD * 1e6) / 1e6,
     type,
     createdAt: new Date(),
-  }).catch(() => {});
+  }).catch(err => console.error('[claude] Error logging usage to Firestore:', err.message));
 }
 
 const ESCALATION_INSTRUCTIONS = `

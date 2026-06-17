@@ -7,6 +7,7 @@ import {
   updateConversationStatus,
   updateHumanMode,
   updateAssignment,
+  dispatchConversation,
   setUrgentFlag,
   addLabelToConversation,
 } from './conversation.service.js';
@@ -43,13 +44,13 @@ const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
 
 function parseEscalationMarker(text) {
   const MARKERS = [
-    { re: /\[ESCALAR_JOAQUIN\]/, assignTo: 'joaquin' },
-    { re: /\[ESCALAR_SOFIA\]/,   assignTo: 'sofia' },
-    { re: /\[ESCALAR\]/,         assignTo: null },
+    { re: /\[ESCALAR_JOAQUIN\]/i, assignTo: 'joaquin' },
+    { re: /\[ESCALAR_SOFIA\]/i,   assignTo: 'sofia' },
+    { re: /\[ESCALAR\]/i,         assignTo: null },
   ];
   for (const { re, assignTo } of MARKERS) {
     if (!re.test(text)) continue;
-    const withoutLine = text.replace(/^[^\n]*\[ESCALAR(?:_JOAQUIN|_SOFIA)?\][^\n]*\n?/m, '').trim();
+    const withoutLine = text.replace(/^[^\n]*\[ESCALAR(?:_JOAQUIN|_SOFIA)?\][^\n]*\n?/mi, '').trim();
     const cleanText = withoutLine || text.replace(re, '').trim();
     return { shouldEscalate: true, assignTo, cleanText };
   }
@@ -98,17 +99,38 @@ export async function processIncomingMessage(msg) {
   const isArchived = ['resolved', 'bot_archived'].includes(conversation.status)
     || conversation.status === 'urgent'; // legacy urgent status
   if (isArchived && !conversation.humanMode) {
+    const previousStatus = conversation.status;
     await Promise.all([
       updateConversationStatus(from, 'bot'),
       updateHumanMode(from, false),
+      updateAssignment(from, null),
     ]);
     conversation.status = 'bot';
     conversation.humanMode = false;
-    console.log(`[bot] Conversación ${from} reabierta automáticamente desde '${conversation.status}'`);
+    conversation.assignedTo = null;
+    console.log(`[bot] Conversación ${from} reabierta automáticamente desde '${previousStatus}'`);
   }
 
   if (conversation.humanMode) {
-    if (text?.trim()) await appendMessage(from, { role: 'user', content: text, contactName });
+    const SAVEABLE_MEDIA = { image: true, audio: true, video: true, document: true, sticker: true };
+    if (SAVEABLE_MEDIA[type]) {
+      const contentMap = {
+        image:    text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]',
+        audio:    '[Audio recibido]',
+        video:    '[Video recibido]',
+        document: '[Archivo recibido]',
+        sticker:  '[Sticker]',
+      };
+      await appendMessage(from, {
+        role: 'user',
+        content: contentMap[type],
+        mediaType: type,
+        mediaId: mediaId ?? null,
+        contactName,
+      });
+    } else if (text?.trim()) {
+      await appendMessage(from, { role: 'user', content: text, contactName });
+    }
     console.log(`[bot] humanMode activo para ${from} — bot silenciado`);
     return;
   }
@@ -212,12 +234,11 @@ export async function processIncomingMessage(msg) {
   }
 
   if (shouldEscalate) {
-    const updates = [
-      updateConversationStatus(from, 'escalated'),
-      updateHumanMode(from, true),
-    ];
-    if (assignTo) updates.push(updateAssignment(from, assignTo));
-    await Promise.all(updates);
+    await dispatchConversation(from, {
+      status: 'escalated',
+      humanMode: true,
+      assignedTo: assignTo ?? null,
+    });
     console.log(`[bot] Escalando ${from} → agente: ${assignTo ?? 'sin asignar'}`);
   } else if (shouldClose) {
     // Bot considers case resolved: archive as bot_archived

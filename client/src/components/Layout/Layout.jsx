@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './Layout.module.css';
@@ -18,10 +19,24 @@ const NAV_ITEMS = [
 export default function Layout() {
   const { agent, logout } = useAuth();
   const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  function closeMenu() { setMenuOpen(false); }
 
   return (
     <div className={styles.shell}>
-      <aside className={styles.sidebar}>
+      {/* Mobile top bar */}
+      <header className={styles.mobileHeader}>
+        <button className={styles.hamburger} onClick={() => setMenuOpen(v => !v)} aria-label="Menú">
+          <span /><span /><span />
+        </button>
+        <span className={styles.mobileBrand}>Gineza</span>
+      </header>
+
+      {/* Backdrop */}
+      {menuOpen && <div className={styles.overlay} onClick={closeMenu} />}
+
+      <aside className={`${styles.sidebar} ${menuOpen ? styles.sidebarOpen : ''}`}>
         <div className={styles.brand}>
           <div className={styles.brandLogo}>G</div>
           <div className={styles.brandText}>
@@ -35,6 +50,7 @@ export default function Layout() {
             <NavLink
               key={to}
               to={to}
+              onClick={closeMenu}
               className={({ isActive }) =>
                 `${styles.navItem} ${isActive ? styles.navItemActive : ''}`
               }
@@ -46,7 +62,7 @@ export default function Layout() {
         </nav>
 
         <div className={styles.sidebarFooter}>
-          <button className={styles.agentInfo} onClick={() => navigate('/profile')}>
+          <button className={styles.agentInfo} onClick={() => { navigate('/profile'); closeMenu(); }}>
             <div className={styles.statusDot} />
             <span className={styles.agentName}>{agent?.name ?? 'Agente'}</span>
           </button>

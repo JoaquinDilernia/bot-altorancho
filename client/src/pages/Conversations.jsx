@@ -110,10 +110,13 @@ function MsgStatusIcon({ msgStatus }) {
   return null;
 }
 
-function MessageBubble({ msg }) {
+function MessageBubble({ msg, onRetry }) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
-  const mediaProxyUrl = msg.mediaId ? `${BASE_URL}/api/conversations/media/${msg.mediaId}` : null;
+  const token = localStorage.getItem('gineza_token');
+  const mediaProxyUrl = msg.mediaId
+    ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}`
+    : null;
   const isError = isAdmin && msg.msgStatus === 'error';
 
   return (
@@ -129,6 +132,11 @@ function MessageBubble({ msg }) {
           <video controls src={mediaProxyUrl} className={styles.msgVideo} />
         )}
         {msg.content && <span>{msg.content}</span>}
+        {onRetry && (
+          <button type="button" className={styles.retryBtn} onClick={() => onRetry(msg.content)}>
+            ↩ Reenviar
+          </button>
+        )}
       </div>
       <span className={styles.msgMeta}>
         {isUser ? 'Cliente' : isAdmin ? 'Agente' : 'Gina'}
@@ -487,6 +495,27 @@ export default function Conversations() {
     } finally { setSending(false); }
   }
 
+  async function handleRetry(text) {
+    if (!selected || sending) return;
+    setSending(true);
+    try {
+      const res = await authFetch(BASE_URL + `/api/conversations/${selected.id}/reply`, {
+        method: 'POST',
+        body: { message: text },
+      });
+      await loadMessages(selected.id);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.windowExpired) {
+          setApiWindowError(true);
+          if (templates.length === 0) loadTemplates();
+        } else {
+          alert(`⚠️ Reenvío fallido: ${data.error ?? 'Error desconocido'}`);
+        }
+      }
+    } finally { setSending(false); }
+  }
+
   async function sendTemplate() {
     if (!selected || !selectedTemplate || sendingTemplate) return;
     setSendingTemplate(true);
@@ -565,6 +594,8 @@ export default function Conversations() {
   const computedWindowExpired = isHuman && lastClientHours !== null && lastClientHours > 24;
   // Combined: either computed from timestamp OR detected from API error response
   const isWindowExpired = computedWindowExpired || apiWindowError;
+  // Warning shown when window is approaching (>20h) but not yet expired
+  const windowApproaching = isHuman && lastClientHours !== null && lastClientHours > 20 && !isWindowExpired;
   // Clear apiWindowError when the window re-opens (client responds and lastClientHours resets)
   if (apiWindowError && !computedWindowExpired && lastClientHours !== null && lastClientHours < 1) {
     setApiWindowError(false);
@@ -814,7 +845,18 @@ export default function Conversations() {
               {messages.length === 0 ? (
                 <p className={styles.noMessages}>Sin mensajes aún.</p>
               ) : (
-                messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)
+                messages.map((msg, i) => {
+                  const canRetry = msg.role === 'admin' && msg.msgStatus === 'error'
+                    && msg.content?.trim() && !msg.mediaType
+                    && !msg.content.startsWith('[Plantilla:');
+                  return (
+                    <MessageBubble
+                      key={i}
+                      msg={msg}
+                      onRetry={canRetry ? handleRetry : null}
+                    />
+                  );
+                })
               )}
               <div ref={messagesEndRef} />
             </div>
@@ -923,6 +965,11 @@ export default function Conversations() {
                 <div className={styles.replyHumanBadge}>
                   Modo agente — Gina no responde · Respondiendo como <strong>{AGENTS.find(a => a.id === myId)?.label ?? myId}</strong>
                 </div>
+                {windowApproaching && (
+                  <div className={styles.windowWarning}>
+                    ⚠️ El cliente no escribe hace {Math.floor(lastClientHours)}h. La ventana de WhatsApp de 24h está por cerrarse — si no responde pronto, los mensajes dejarán de llegar.
+                  </div>
+                )}
                 <div className={styles.replyRow}>
                   <div className={styles.replyInputWrap}>
                     {slashSuggestions.length > 0 && (

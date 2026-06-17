@@ -165,3 +165,92 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
+
+/* ==================== MOBILE ==================== */
+
+/* Hidden on desktop, shown on mobile */
+.mobileHeader { display: none; }
+.hamburger    { display: none; }
+.mobileBrand  { display: none; }
+
+/* Overlay always in DOM when menuOpen=true (conditional render), styled here */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 199;
+}
+
+/* sidebarOpen only has effect on mobile (transform is overridden) */
+.sidebarOpen {}
+
+@media (max-width: 768px) {
+  .mobileHeader {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    height: 52px;
+    padding: 0 var(--space-4);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
+  }
+
+  .hamburger {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+  }
+  .hamburger span {
+    display: block;
+    width: 18px;
+    height: 2px;
+    background: var(--color-text);
+    border-radius: 2px;
+  }
+
+  .mobileBrand {
+    display: block;
+    font-size: var(--font-size-md);
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    height: 100dvh;
+    width: min(280px, 80vw);
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    box-shadow: none;
+    overflow-y: auto;
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.15);
+  }
+
+  .main {
+    padding-top: 52px;
+  }
+}
