@@ -151,11 +151,9 @@ router.patch('/:contactId/dispatch', async (req, res) => {
     const { action, agentId } = req.body;
 
     const patches = {
-      to_sofia:     { status: 'escalated', humanMode: true,  assignedTo: 'sofia' },
-      to_joaquin:   { status: 'escalated', humanMode: true,  assignedTo: 'joaquin' },
-      to_bot:       { status: 'bot',       humanMode: false, assignedTo: null, urgent: false },
+      to_bot:       { status: 'bot',          humanMode: false, assignedTo: null, urgent: false },
       bot_archive:  { status: 'bot_archived', humanMode: false, assignedTo: null, urgent: false },
-      resolved:     { status: 'resolved',  humanMode: false },
+      resolved:     { status: 'resolved',     humanMode: false },
       set_urgent:   { urgent: true },
       unset_urgent: { urgent: false },
     };
@@ -164,6 +162,15 @@ router.patch('/:contactId/dispatch', async (req, res) => {
     if (action === 'take_over') {
       if (!agentId) return res.status(400).json({ error: 'agentId requerido para take_over' });
       const patch = { status: 'escalated', humanMode: true, assignedTo: agentId };
+      await dispatchConversation(req.params.contactId, patch);
+      return res.json({ ok: true, ...patch });
+    }
+
+    // assign_dept: escalate to a department (or agent email)
+    if (action === 'assign_dept') {
+      const { deptId } = req.body;
+      if (!deptId) return res.status(400).json({ error: 'deptId requerido' });
+      const patch = { status: 'escalated', humanMode: true, assignedTo: deptId };
       await dispatchConversation(req.params.contactId, patch);
       return res.json({ ok: true, ...patch });
     }

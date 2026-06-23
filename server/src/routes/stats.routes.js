@@ -43,16 +43,19 @@ router.get('/', async (req, res) => {
     const start = getPeriodStart(period);
     const startTs = admin.firestore.Timestamp.fromDate(start);
 
-    const [snap, agentsSnap] = await Promise.all([
+    const [snap, agentsSnap, deptsSnap] = await Promise.all([
       db.collection('bot-altorancho_conversations').where('createdAt', '>=', startTs).get(),
       db.collection('bot-altorancho_agents').get(),
+      db.collection('bot-altorancho_departments').get(),
     ]);
 
     const conversations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const departments = deptsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
     const agentBuckets = { bot: { handled: 0, resolved: 0 } };
     for (const a of agents) agentBuckets[a.email] = { handled: 0, resolved: 0 };
+    for (const dep of departments) agentBuckets[dep.id] = { handled: 0, resolved: 0 };
 
     const byStatus  = { bot: 0, urgent: 0, escalated: 0, resolved: 0 };
     const byChannel = { whatsapp: 0, instagram: 0 };
@@ -109,6 +112,13 @@ router.get('/', async (req, res) => {
         name: a.name ?? a.email,
         ...(agentBuckets[a.email] ?? { handled: 0, resolved: 0 }),
       })),
+      ...departments
+        .filter(dep => agentBuckets[dep.id]?.handled > 0)
+        .map(dep => ({
+          id: dep.id,
+          name: `${dep.name} (depto.)`,
+          ...agentBuckets[dep.id],
+        })),
     ];
 
     res.json({

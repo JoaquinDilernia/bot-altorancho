@@ -4,10 +4,6 @@ import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
 import styles from './Conversations.module.css';
 
-const AGENTS = [
-  { id: 'sofia',   label: 'Sofía' },
-  { id: 'joaquin', label: 'Joaquín' },
-];
 
 const STATUS_CONFIG = {
   bot:          { label: 'Bot activo',    cls: 'bot' },
@@ -41,10 +37,9 @@ function ChannelBadge({ channel }) {
   return <span className={`${styles.badge} ${styles['badge_' + cfg.cls]}`}>{cfg.label}</span>;
 }
 
-function AgentBadge({ assignedTo }) {
+function AgentBadge({ assignedTo, nameMap = {} }) {
   if (!assignedTo) return null;
-  const agent = AGENTS.find(a => a.id === assignedTo);
-  return <span className={styles.agentBadge}>{agent?.label ?? assignedTo}</span>;
+  return <span className={styles.agentBadge}>{nameMap[assignedTo] ?? assignedTo}</span>;
 }
 
 function LabelChip({ label, labelMap, onRemove }) {
@@ -171,7 +166,7 @@ function ConvItem({ conv, active, onClick, labelMap }) {
       <div className={styles.itemBottom}>
         <StatusChip status={conv.status || 'bot'} />
         <ChannelBadge channel={conv.channel} />
-        <AgentBadge assignedTo={conv.assignedTo} />
+        <AgentBadge assignedTo={conv.assignedTo} nameMap={nameMap} />
       </div>
       {conv.lastMessage && <p className={styles.itemPreview}>{conv.lastMessage}</p>}
       {conv.labels?.length > 0 && (
@@ -221,6 +216,8 @@ export default function Conversations() {
   const [newConvError, setNewConvError] = useState('');
   const [summary, setSummary] = useState(null);
   const [summaryGenerating, setSummaryGenerating] = useState(false);
+  const [departments, setDepartments] = useState([]);
+  const [nameMap, setNameMap] = useState({});
   const [apiWindowError, setApiWindowError] = useState(false);
   const [templateSendOpen, setTemplateSendOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -238,7 +235,6 @@ export default function Conversations() {
 
   const labelMap = Object.fromEntries(allLabels.map(l => [l.name, l.color]));
   const myId = agent?.id;
-  const otherAgent = myId === 'joaquin' ? 'sofia' : 'joaquin';
 
   useNotifications(conversations);
 
@@ -246,6 +242,18 @@ export default function Conversations() {
     loadConversations();
     loadAllLabels();
     loadQuickReplies();
+    // Load departments + agents for name resolution
+    Promise.all([
+      authFetch(BASE_URL + '/api/departments').then(r => r.ok ? r.json() : { departments: [] }),
+      authFetch(BASE_URL + '/api/auth/users').then(r => r.ok ? r.json() : []),
+    ]).then(([deptsData, agents]) => {
+      const depts = deptsData.departments ?? [];
+      setDepartments(depts);
+      const map = {};
+      for (const d of depts) map[d.id] = d.name;
+      for (const a of agents) { map[a.email] = a.name; map[a.id] = a.name; }
+      setNameMap(map);
+    });
     pollConvRef.current = setInterval(loadConversations, 10000);
     return () => clearInterval(pollConvRef.current);
   }, []);
@@ -732,7 +740,7 @@ export default function Conversations() {
                 <div className={styles.threadHeaderBadges}>
                   <ChannelBadge channel={selected.channel} />
                   <StatusChip status={currentStatus} />
-                  {selected.assignedTo && <AgentBadge assignedTo={selected.assignedTo} />}
+                  {selected.assignedTo && <AgentBadge assignedTo={selected.assignedTo} nameMap={nameMap} />}
                 </div>
 
                 {!isArchived && (
@@ -758,22 +766,17 @@ export default function Conversations() {
                       </button>
                     )}
 
-                    <button
-                      className={`${styles.dispatchBtn} ${selected.assignedTo === 'sofia' && isHuman ? styles.dispatchBtnActive : ''}`}
-                      onClick={() => dispatch('to_sofia')}
-                      disabled={updating}
-                      title="Derivar a Sofía"
-                    >
-                      → Sofía
-                    </button>
-                    <button
-                      className={`${styles.dispatchBtn} ${selected.assignedTo === 'joaquin' && isHuman ? styles.dispatchBtnActive : ''}`}
-                      onClick={() => dispatch('to_joaquin')}
-                      disabled={updating}
-                      title="Derivar a Joaquín"
-                    >
-                      → Joaquín
-                    </button>
+                    {departments.map(dept => (
+                      <button
+                        key={dept.id}
+                        className={`${styles.dispatchBtn} ${selected.assignedTo === dept.id && isHuman ? styles.dispatchBtnActive : ''}`}
+                        onClick={() => dispatch('assign_dept', { deptId: dept.id })}
+                        disabled={updating}
+                        title={`Derivar a ${dept.name}`}
+                      >
+                        → {dept.name}
+                      </button>
+                    ))}
 
                     {/* Urgent toggle: always visible, toggles the flag */}
                     {isUrgentFlag ? (

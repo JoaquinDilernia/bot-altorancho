@@ -15,7 +15,8 @@ const STATUS_META = {
   resolved:  { label: 'Resuelto',   color: 'var(--color-status-resolved)' },
 };
 
-const AGENT_COLOR = { bot: 'var(--color-primary)', sofia: '#8b5cf6', joaquin: '#0ea5e9' };
+const AGENT_COLORS = ['var(--color-primary)', '#8b5cf6', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444'];
+function agentColor(idx) { return AGENT_COLORS[idx % AGENT_COLORS.length]; }
 const CHANNEL_META = {
   whatsapp:  { label: 'WhatsApp',  color: '#25d366' },
   instagram: { label: 'Instagram', color: '#e1306c' },
@@ -108,8 +109,8 @@ export default function Stats() {
             <section className={styles.section}>
               <h2 className={styles.sectionTitle}>Por agente</h2>
               <div className={styles.agentRows}>
-                {data.byAgent.map(a => {
-                  const color = AGENT_COLOR[a.id] ?? 'var(--color-primary)';
+                {data.byAgent.map((a, idx) => {
+                  const color = agentColor(idx);
                   return (
                     <div key={a.id} className={styles.agentRow}>
                       <div className={styles.agentLeft}>
