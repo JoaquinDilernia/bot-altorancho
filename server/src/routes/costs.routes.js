@@ -46,7 +46,7 @@ function parsePeriod(monthStr) {
 async function getClaudeCosts(start, end) {
   const db = getDb();
   // Range-only query avoids needing a composite (service, createdAt) index
-  const snap = await db.collection('usage_logs')
+  const snap = await db.collection('bot-altorancho_usage_logs')
     .where('createdAt', '>=', start)
     .where('createdAt', '<=', end)
     .get();

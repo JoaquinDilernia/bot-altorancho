@@ -6,32 +6,53 @@ const client = axios.create({
   baseURL: `${BASE_URL}/${process.env.TIENDANUBE_STORE_ID}`,
   headers: {
     Authentication: `bearer ${process.env.TIENDANUBE_ACCESS_TOKEN}`,
-    'User-Agent': 'BOT-GINEZA/1.0',
+    'User-Agent': 'BOT-ALTORANCHO/1.0',
     'Content-Type': 'application/json',
   },
 });
 
+const ORDER_FIELDS = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,note,created_at';
+
 /**
  * Busca un pedido por número exacto o por email del cliente.
+ * Busca en todos los estados (open, closed, cancelled) para encontrar pedidos archivados.
  * @param {string} query - Número de pedido o email
  * @returns {Promise<object|null>}
  */
 export async function findOrder(query) {
+  const num = String(query.trim());
+
+  if (num.includes('@')) {
+    // Búsqueda por email → primer resultado
+    try {
+      const { data } = await client.get('/orders', {
+        params: { q: num, fields: ORDER_FIELDS, per_page: 5 },
+      });
+      return data?.[0] ?? null;
+    } catch (err) {
+      console.error('[tiendanube] Error buscando por email:', err.message);
+      return null;
+    }
+  }
+
+  // Búsqueda por número: primero sin filtro de status (cubre open + recientes)
+  // Si no aparece, busca explícitamente en closed y cancelled en paralelo
   try {
-    const fields = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,note,created_at';
-    const params = { q: query.trim(), fields, per_page: 10 };
+    const [openRes, closedRes, cancelledRes] = await Promise.all([
+      client.get('/orders', { params: { q: num, fields: ORDER_FIELDS, per_page: 50 } }),
+      client.get('/orders', { params: { q: num, fields: ORDER_FIELDS, per_page: 50, status: 'closed' } }),
+      client.get('/orders', { params: { q: num, fields: ORDER_FIELDS, per_page: 50, status: 'cancelled' } }),
+    ]);
 
-    console.log('[tiendanube] findOrder params:', params);
-    const { data } = await client.get('/orders', { params });
-    console.log('[tiendanube] findOrder results:', data?.length ?? 0, 'orders found');
+    const allOrders = [
+      ...(openRes.data ?? []),
+      ...(closedRes.data ?? []),
+      ...(cancelledRes.data ?? []),
+    ];
 
-    const isEmail = query.includes('@');
-    const result = isEmail
-      ? (data?.[0] ?? null)
-      : (data?.find(o => String(o.number) === String(query.trim())) ?? null);
-
-    console.log('[tiendanube] exact match:', result?.number ?? 'none');
-    return result;
+    const exact = allOrders.find(o => String(o.number) === num) ?? null;
+    console.log(`[tiendanube] findOrder #${num}: ${allOrders.length} resultados totales, match: ${exact?.number ?? 'none'} (status: ${exact?.status ?? '-'})`);
+    return exact;
   } catch (err) {
     console.error('[tiendanube] Error buscando pedido:', err.message, err.response?.status, err.response?.data);
     return null;

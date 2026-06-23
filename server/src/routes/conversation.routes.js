@@ -53,7 +53,11 @@ router.get('/media/:mediaId', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { channel, status, assignedTo } = req.query;
-    const conversations = await listConversations({ channel, status, assignedTo });
+    // operador sees conversations assigned to their department (bot escalation) OR directly to their email
+    const assignedToFilter = req.agent.role === 'operador'
+      ? [req.agent.department, req.agent.email].filter(Boolean)
+      : (assignedTo ?? undefined);
+    const conversations = await listConversations({ channel, status, assignedTo: assignedToFilter });
     res.json({ conversations });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -109,7 +113,7 @@ router.post('/start', async (req, res) => {
     }
 
     const db = getDb();
-    const updated = await db.collection('conversations').doc(normalizedPhone).get();
+    const updated = await db.collection('bot-altorancho_conversations').doc(normalizedPhone).get();
     res.status(201).json({ id: updated.id, ...updated.data() });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -186,11 +190,10 @@ router.patch('/:contactId/mode', async (req, res) => {
 router.patch('/:contactId/assign', async (req, res) => {
   try {
     const { assignedTo } = req.body;
-    const valid = ['sofia', 'joaquin', null];
-    if (!valid.includes(assignedTo)) {
-      return res.status(400).json({ error: 'assignedTo debe ser "sofia", "joaquin" o null' });
+    if (assignedTo !== null && typeof assignedTo !== 'string') {
+      return res.status(400).json({ error: 'assignedTo debe ser un string (email o id de departamento) o null' });
     }
-    await updateAssignment(req.params.contactId, assignedTo);
+    await updateAssignment(req.params.contactId, assignedTo ?? null);
     res.json({ ok: true, assignedTo: assignedTo ?? null });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -225,7 +228,7 @@ router.post('/:contactId/reply', async (req, res) => {
     }
 
     const db = getDb();
-    const doc = await db.collection('conversations').doc(contactId).get();
+    const doc = await db.collection('bot-altorancho_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
 
     const { channel } = doc.data();
@@ -280,7 +283,7 @@ router.post('/:contactId/send-template', async (req, res) => {
     }
 
     const db = getDb();
-    const doc = await db.collection('conversations').doc(contactId).get();
+    const doc = await db.collection('bot-altorancho_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
 
     const { channel } = doc.data();
@@ -322,7 +325,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No se recibió archivo' });
 
     const db = getDb();
-    const doc = await db.collection('conversations').doc(contactId).get();
+    const doc = await db.collection('bot-altorancho_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
     const { channel } = doc.data();
 
@@ -373,7 +376,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
 router.get('/:contactId/summary', async (req, res) => {
   try {
     const db = getDb();
-    const doc = await db.collection('conversations').doc(req.params.contactId).get();
+    const doc = await db.collection('bot-altorancho_conversations').doc(req.params.contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
     res.json({ summary: doc.data().aiSummary ?? null });
   } catch (err) {
@@ -386,7 +389,7 @@ router.post('/:contactId/summary', async (req, res) => {
     const { contactId } = req.params;
     const db = getDb();
     const [doc, messages] = await Promise.all([
-      db.collection('conversations').doc(contactId).get(),
+      db.collection('bot-altorancho_conversations').doc(contactId).get(),
       getConversationHistory(contactId),
     ]);
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
@@ -394,7 +397,7 @@ router.post('/:contactId/summary', async (req, res) => {
     const metrics = calcConvMetrics(messages, convData);
     const text = await generateConversationSummary(messages);
     const summary = { text, generatedAt: new Date(), metrics };
-    await db.collection('conversations').doc(contactId).update({ aiSummary: summary });
+    await db.collection('bot-altorancho_conversations').doc(contactId).update({ aiSummary: summary });
     res.json({ summary });
   } catch (err) {
     res.status(500).json({ error: err.message });

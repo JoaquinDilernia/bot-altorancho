@@ -9,7 +9,7 @@ function logUsage(usage, type) {
   const costUSD =
     (usage.input_tokens / 1e6) * PRICING.inputPerMTok +
     (usage.output_tokens / 1e6) * PRICING.outputPerMTok;
-  getDb().collection('usage_logs').add({
+  getDb().collection('bot-altorancho_usage_logs').add({
     service: 'claude',
     model: MODEL,
     inputTokens: usage.input_tokens,
@@ -20,19 +20,31 @@ function logUsage(usage, type) {
   }).catch(err => console.error('[claude] Error logging usage to Firestore:', err.message));
 }
 
-const ESCALATION_INSTRUCTIONS = `
-IMPORTANTE — ESCALADA: Si la consulta requiere atención humana, poné UNO de estos marcadores en una línea separada dentro de tu respuesta (puede ir al principio o en medio, pero NUNCA agregues texto en la misma línea del marcador — el marcador debe estar solo en su línea):
-- [ESCALAR_JOAQUIN] — para temas de pagos, facturación, reembolsos, cobros incorrectos, problemas con tarjeta.
-- [ESCALAR_SOFIA] — para temas de envíos, demoras, seguimiento, cambios, devoluciones de productos.
-- [ESCALAR] — para reclamos graves, clientes muy enojados u otras situaciones urgentes sin categoría clara.
-El resto de tu respuesta (antes o después del marcador) es lo que le llega al cliente: avisale que lo derivás y que puede haber una pequeña demora. El marcador es invisible para el cliente. Ejemplo correcto:
-"Entiendo, ya te paso con alguien del equipo de envíos. Puede que tarde unos minutos en responderte, ¡pero van a ayudarte enseguida! 🤍
-[ESCALAR_SOFIA]"
-NUNCA pongas texto descriptivo junto al marcador en la misma línea (ej: "[ESCALAR_SOFIA] Cliente consulta sobre..." está MAL).
+function buildEscalationInstructions(departments = []) {
+  if (!departments.length) {
+    return `
+IMPORTANTE — ESCALADA: Si la consulta requiere atención humana y no podés resolverla, usá el marcador [ESCALAR] en una línea separada.
 
-IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió o ya no hay nada pendiente, empezá tu respuesta con [CERRAR].
+IMPORTANTE — CIERRE: Si la consulta está completamente resuelta, empezá tu respuesta con [CERRAR].
+Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."`;
+  }
+
+  const lines = departments.map(d => `- [ESCALAR_${d.id.toUpperCase()}] — ${d.description}`).join('\n');
+
+  return `
+IMPORTANTE — ESCALADA: Cuando la consulta requiere atención humana, usá UNO de estos marcadores en una línea separada (NUNCA pongas otro texto en esa misma línea):
+${lines}
+- [ESCALAR] — para reclamos graves, clientes muy enojados u otras situaciones urgentes sin categoría clara.
+
+El texto de tu respuesta (antes o después del marcador) es lo que le llega al cliente — avisale que lo derivás y que puede haber una pequeña demora. El marcador es invisible para el cliente.
+Ejemplo correcto:
+"Entiendo, te paso con el equipo de logística ahora mismo. Puede tardar unos minutos, ¡pero te van a ayudar enseguida!
+[ESCALAR_LOGISTICA]"
+
+IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió, empezá tu respuesta con [CERRAR].
 Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."
-Usá [CERRAR] solo cuando estés segura de que la conversación terminó. No lo uses si puede haber más preguntas.`;
+Usá [CERRAR] solo cuando estés seguro de que la conversación terminó.`;
+}
 
 function callAnthropicAPI(payload) {
   return new Promise((resolve, reject) => {
@@ -90,9 +102,9 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null } = context;
+  const { knowledgeBase = '', orderInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, customerContext, availableLabels);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, customerContext, availableLabels, departments);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -106,18 +118,19 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return response.content[0].text;
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, customerContext, availableLabels = []) {
-  const botName = botConfig.botName || 'Gina';
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, customerContext, availableLabels = [], departments = []) {
+  const botName = botConfig.botName || 'Asistente';
+  const businessName = botConfig.businessName || 'Alto Rancho';
   const personality = botConfig.botPersonality ||
     `Respondés de forma amigable, natural y cercana — como lo haría una persona real del equipo.
-Usás un tono cálido, femenino y profesional. Nunca robótico ni genérico.
-Escribís en español rioplatense (vos, che, etc.) pero con elegancia.
-Si no sabés algo, lo decís honestamente y ofrecés derivar a una persona.
+Usás un tono cálido y profesional. Nunca robótico ni genérico.
+Escribís en español rioplatense (vos, etc.) con claridad.
+Si no sabés algo, lo decís honestamente y ofrecés derivar a la persona correcta.
 Nunca inventás información sobre precios, stock o pedidos — solo usás los datos que te den.
-Cuando tenés información de un pedido, la compartís directamente sin pedir verificación de identidad ni cuestionar si el pedido le pertenece al cliente. El número de pedido es suficiente para dar información.`;
+Cuando tenés información de un pedido, la compartís directamente sin pedir verificación de identidad. El número de pedido es suficiente para dar información.`;
 
-  let prompt = `Sos el asistente virtual de Gineza, una tienda de indumentaria femenina. Tu nombre es ${botName}.\n${personality}`;
-  prompt += ESCALATION_INSTRUCTIONS;
+  let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
+  prompt += buildEscalationInstructions(departments);
   if (knowledgeBase) prompt += `\n\n--- INFORMACIÓN DE LA TIENDA ---\n${knowledgeBase}`;
   if (customerContext) prompt += `\n\n--- PERFIL DEL CLIENTE ---\n${customerContext}`;
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos. Si el cliente menciona un número y no tenés información del pedido, decí que no lo encontraste y pedí que confirme el número o te dé el email con el que compró. No sugieras que "quizás es otro número".`;

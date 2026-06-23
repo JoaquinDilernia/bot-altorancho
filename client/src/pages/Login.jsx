@@ -6,7 +6,7 @@ import styles from './Login.module.css';
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,7 +16,7 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
-      await login(username.trim(), password);
+      await login(email.trim(), password);
       navigate('/', { replace: true });
     } catch (err) {
       setError(err.message);
@@ -28,17 +28,17 @@ export default function Login() {
   return (
     <div className={styles.page}>
       <div className={styles.card}>
-        <div className={styles.logo}>G</div>
-        <h1 className={styles.title}>Gineza</h1>
-        <p className={styles.subtitle}>Panel de agentes</p>
+        <div className={styles.logo}>A</div>
+        <h1 className={styles.title}>Alto Rancho</h1>
+        <p className={styles.subtitle}>Panel de administración</p>
         <form className={styles.form} onSubmit={handleSubmit}>
           <input
             className={styles.input}
-            type="text"
-            placeholder="Usuario"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
-            autoComplete="username"
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            autoComplete="email"
             autoFocus
           />
           <input

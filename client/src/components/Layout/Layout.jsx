@@ -3,18 +3,29 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './Layout.module.css';
 
+// minRole: undefined = all, 'atencion_cliente' = not operador, 'admin' = only admin
 const NAV_ITEMS = [
-  { to: '/dashboard',     label: 'Dashboard',      icon: IconDashboard },
   { to: '/conversations', label: 'Conversaciones',  icon: IconChat },
-  { to: '/stats',         label: 'Estadísticas',    icon: IconChart },
-  { to: '/simulator',     label: 'Simulador',       icon: IconFlask },
-  { to: '/knowledge',     label: 'Knowledge Base',  icon: IconBook },
-  { to: '/labels',         label: 'Etiquetas',       icon: IconTag },
-  { to: '/quick-replies',  label: 'Resp. Rápidas',   icon: IconZap },
-  { to: '/templates',      label: 'Plantillas',       icon: IconTemplate },
-  { to: '/costs',          label: 'Costos',           icon: IconDollar },
-  { to: '/config',         label: 'Configuración',   icon: IconSettings },
+  { to: '/dashboard',     label: 'Dashboard',       icon: IconDashboard,  minRole: 'atencion_cliente' },
+  { to: '/stats',         label: 'Estadísticas',    icon: IconChart,      minRole: 'atencion_cliente' },
+  { to: '/knowledge',     label: 'Knowledge Base',  icon: IconBook,       minRole: 'atencion_cliente' },
+  { to: '/notifications', label: 'Notificaciones',  icon: IconBell,       minRole: 'atencion_cliente' },
+  { to: '/departments',   label: 'Departamentos',   icon: IconDepartment, minRole: 'atencion_cliente' },
+  { to: '/labels',        label: 'Etiquetas',       icon: IconTag,        minRole: 'atencion_cliente' },
+  { to: '/quick-replies', label: 'Resp. Rápidas',   icon: IconZap,        minRole: 'atencion_cliente' },
+  { to: '/templates',     label: 'Plantillas',      icon: IconTemplate,   minRole: 'atencion_cliente' },
+  { to: '/simulator',     label: 'Simulador',       icon: IconFlask,      minRole: 'atencion_cliente' },
+  { to: '/config',        label: 'Configuración',   icon: IconSettings,   minRole: 'atencion_cliente' },
+  { to: '/costs',         label: 'Costos',          icon: IconDollar,     minRole: 'admin' },
+  { to: '/users',         label: 'Usuarios',        icon: IconUsers,      minRole: 'admin' },
 ];
+
+function canAccess(role, minRole) {
+  if (!minRole) return true;
+  if (minRole === 'admin') return role === 'admin';
+  if (minRole === 'atencion_cliente') return role === 'admin' || role === 'atencion_cliente';
+  return true;
+}
 
 export default function Layout() {
   const { agent, logout } = useAuth();
@@ -30,7 +41,7 @@ export default function Layout() {
         <button className={styles.hamburger} onClick={() => setMenuOpen(v => !v)} aria-label="Menú">
           <span /><span /><span />
         </button>
-        <span className={styles.mobileBrand}>Gineza</span>
+        <span className={styles.mobileBrand}>Alto Rancho</span>
       </header>
 
       {/* Backdrop */}
@@ -38,15 +49,15 @@ export default function Layout() {
 
       <aside className={`${styles.sidebar} ${menuOpen ? styles.sidebarOpen : ''}`}>
         <div className={styles.brand}>
-          <div className={styles.brandLogo}>G</div>
+          <div className={styles.brandLogo}>A</div>
           <div className={styles.brandText}>
-            <span className={styles.brandName}>Gineza</span>
+            <span className={styles.brandName}>Alto Rancho</span>
             <span className={styles.brandSub}>Bot Dashboard</span>
           </div>
         </div>
 
         <nav className={styles.nav}>
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          {NAV_ITEMS.filter(item => canAccess(agent?.role, item.minRole)).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -154,6 +165,35 @@ function IconTemplate({ className }) {
       <rect x="3" y="3" width="18" height="18" rx="2" />
       <line x1="3" y1="9" x2="21" y2="9" />
       <line x1="9" y1="21" x2="9" y2="9" />
+    </svg>
+  );
+}
+
+function IconDepartment({ className }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
+    </svg>
+  );
+}
+
+function IconUsers({ className }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+      <circle cx="9" cy="7" r="4"/>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  );
+}
+
+function IconBell({ className }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
     </svg>
   );
 }

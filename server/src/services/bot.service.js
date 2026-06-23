@@ -12,6 +12,7 @@ import {
   addLabelToConversation,
 } from './conversation.service.js';
 import { findOrder, findOrdersByEmail, formatOrderStatus } from './tiendanube.service.js';
+import { findOdooOrder, findOdooOrdersByContact, formatOdooOrder } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64 } from './meta.service.js';
 import {
   getOrCreateCustomer,
@@ -20,14 +21,17 @@ import {
   linkCustomerFromOrder,
 } from './customer.service.js';
 import { getAllLabels, createLabel } from './label.service.js';
+import { getActiveDepartments } from './department.service.js';
 import { getDb } from './firebase.service.js';
 
+// Captura números Odoo (S08121), TiendaNube (TN1999675391) y números puros
+const ORDER_REF = '[A-Z]{0,2}\\d{3,}';
 const ORDER_PATTERNS = [
-  /pedido\s*#?\s*(\d{4,})/i,
-  /orden\s*#?\s*(\d{4,})/i,
-  /compra\s*#?\s*(\d{4,})/i,
-  /número\s*#?\s*(\d{4,})/i,
-  /^(\d{4,})$/,
+  new RegExp(`pedido\\s*#?\\s*(${ORDER_REF})`, 'i'),
+  new RegExp(`orden\\s*#?\\s*(${ORDER_REF})`, 'i'),
+  new RegExp(`compra\\s*#?\\s*(${ORDER_REF})`, 'i'),
+  new RegExp(`número\\s*#?\\s*(${ORDER_REF})`, 'i'),
+  new RegExp(`^(${ORDER_REF})$`, 'i'),
   /tracking/i,
   /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
   /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
@@ -42,15 +46,18 @@ const URGENCY_KEYWORDS = [
 
 const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
 
-function parseEscalationMarker(text) {
-  const MARKERS = [
-    { re: /\[ESCALAR_JOAQUIN\]/i, assignTo: 'joaquin' },
-    { re: /\[ESCALAR_SOFIA\]/i,   assignTo: 'sofia' },
-    { re: /\[ESCALAR\]/i,         assignTo: null },
-  ];
-  for (const { re, assignTo } of MARKERS) {
+function parseEscalationMarker(text, departments = []) {
+  // Build dynamic markers from active departments
+  const markers = departments.map(d => ({
+    re: new RegExp(`\\[ESCALAR_${d.id.toUpperCase()}\\]`, 'i'),
+    assignTo: d.id,
+  }));
+  // Always include generic fallback
+  markers.push({ re: /\[ESCALAR\]/i, assignTo: null });
+
+  for (const { re, assignTo } of markers) {
     if (!re.test(text)) continue;
-    const withoutLine = text.replace(/^[^\n]*\[ESCALAR(?:_JOAQUIN|_SOFIA)?\][^\n]*\n?/mi, '').trim();
+    const withoutLine = text.replace(/^[^\n]*\[ESCALAR[^\]]*\][^\n]*\n?/mi, '').trim();
     const cleanText = withoutLine || text.replace(re, '').trim();
     return { shouldEscalate: true, assignTo, cleanText };
   }
@@ -78,15 +85,16 @@ export async function processIncomingMessage(msg) {
     markWhatsAppAsRead(messageId).catch(() => {});
   }
 
-  let conversation, history, knowledgeBase, customer, availableLabels, configDoc;
+  let conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments;
   try {
-    [conversation, history, knowledgeBase, customer, availableLabels, configDoc] = await Promise.all([
+    [conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments] = await Promise.all([
       getOrCreateConversation(from, channel, contactName),
       getConversationHistory(from),
       getKnowledgeBasePrompt().catch(() => ''),
       getOrCreateCustomer(from, channel, contactName),
       getAllLabels().catch(() => []),
-      getDb().collection('config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
+      getDb().collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
+      getActiveDepartments().catch(() => []),
     ]);
   } catch (err) {
     console.error('[bot] Error cargando contexto para', from, err.message);
@@ -197,7 +205,7 @@ export async function processIncomingMessage(msg) {
     ? (Date.now() - (conversation.updatedAt._seconds ? conversation.updatedAt._seconds * 1000 : new Date(conversation.updatedAt).getTime())) < TEN_DAYS_MS
     : false;
 
-  const orderInfo = await resolveOrderContext(text ?? '');
+  const orderInfo = await resolveOrderContext(text ?? '', customer);
   const customerContext = buildCustomerContext(customer);
 
   if (orderInfo.tnCustomer) {
@@ -214,11 +222,12 @@ export async function processIncomingMessage(msg) {
     availableLabels: availableLabels.map(l => l.name),
     botConfig,
     imageData,
+    departments,
     isReopened: isRecent && history.length > 0,
   });
   console.log(`[bot] Claude respondió (${botReply.length} chars) para ${from}`);
 
-  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply);
+  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText } = parseLabelMarkers(textAfterClose);
 
@@ -267,14 +276,22 @@ export async function processIncomingMessage(msg) {
   }
 }
 
-async function resolveOrderContext(text) {
+async function resolveOrderContext(text, customer) {
   const trimmed = text.trim();
 
   if (trimmed.includes('@')) {
-    const orders = await findOrdersByEmail(trimmed);
-    if (orders.length) {
-      const summary = orders.map(o => formatOrderStatus(o)).filter(Boolean);
-      return { orderInfo: summary, tnCustomer: orders[0]?.customer ?? null };
+    // Buscar en TiendaNube y Odoo en paralelo por email
+    const [tnOrders, odooOrders] = await Promise.all([
+      findOrdersByEmail(trimmed),
+      findOdooOrdersByContact(trimmed),
+    ]);
+    if (tnOrders.length) {
+      const summary = tnOrders.map(o => formatOrderStatus(o)).filter(Boolean);
+      return { orderInfo: summary, tnCustomer: tnOrders[0]?.customer ?? null };
+    }
+    if (odooOrders.length) {
+      const summary = odooOrders.map(o => formatOdooOrder(o)).filter(Boolean);
+      return { orderInfo: summary, tnCustomer: null };
     }
     return { orderInfo: null, tnCustomer: null };
   }
@@ -282,14 +299,48 @@ async function resolveOrderContext(text) {
   for (const pattern of ORDER_PATTERNS) {
     const match = trimmed.match(pattern);
     if (match) {
-      const orderNumber = match[1] ?? null;
-      if (orderNumber) {
-        const order = await findOrder(orderNumber);
-        return {
-          orderInfo: order ? formatOrderStatus(order) : null,
-          tnCustomer: order?.customer ?? null,
-        };
+      const orderRef = match[1] ?? null;
+
+      if (orderRef) {
+        // Buscar en Odoo primero (tiene todos los pedidos incluyendo los de TN)
+        // y en TiendaNube en paralelo para obtener tracking URL si existe
+        const [odooResult, tnOrder] = await Promise.all([
+          findOdooOrder(orderRef),
+          /^\d+$/.test(orderRef) ? findOrder(orderRef) : Promise.resolve(null),
+        ]);
+
+        if (odooResult) {
+          const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
+          // Enriquecer con tracking de TN si está disponible
+          if (tnOrder?.shipping_tracking_url) {
+            odooInfo.tracking = tnOrder.shipping_tracking_url;
+          }
+          return { orderInfo: odooInfo, tnCustomer: tnOrder?.customer ?? null };
+        }
+        if (tnOrder) {
+          return { orderInfo: formatOrderStatus(tnOrder), tnCustomer: tnOrder.customer ?? null };
+        }
+        return { orderInfo: null, tnCustomer: null };
       }
+
+      // Sin número → usar última orden del perfil del cliente
+      const lastNumber = customer?.tnOrders?.[0]?.number;
+      if (lastNumber) {
+        console.log(`[bot] Sin número en mensaje, usando orden guardada del cliente: #${lastNumber}`);
+        const [odooResult, tnOrder] = await Promise.all([
+          findOdooOrder(String(lastNumber)),
+          findOrder(String(lastNumber)),
+        ]);
+        if (odooResult) {
+          const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
+          if (tnOrder?.shipping_tracking_url) odooInfo.tracking = tnOrder.shipping_tracking_url;
+          return { orderInfo: odooInfo, tnCustomer: tnOrder?.customer ?? null };
+        }
+        if (tnOrder) {
+          return { orderInfo: formatOrderStatus(tnOrder), tnCustomer: tnOrder.customer ?? null };
+        }
+      }
+
       return { orderInfo: null, tnCustomer: null };
     }
   }

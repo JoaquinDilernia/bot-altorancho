@@ -1,7 +1,7 @@
 import { getDb } from './firebase.service.js';
 import admin from 'firebase-admin';
 
-const COLLECTION = 'conversations';
+const COLLECTION = 'bot-altorancho_conversations';
 
 // Valid statuses: bot, escalated, bot_archived, resolved
 // 'urgent' is now a boolean flag (data.urgent), not a status
@@ -199,7 +199,10 @@ export async function listConversations(filters = {}) {
 
   if (filters.channel) docs = docs.filter(d => d.channel === filters.channel);
   if (filters.status)  docs = docs.filter(d => d.status === filters.status);
-  if (filters.assignedTo) docs = docs.filter(d => d.assignedTo === filters.assignedTo);
+  if (filters.assignedTo) {
+    const targets = Array.isArray(filters.assignedTo) ? filters.assignedTo : [filters.assignedTo];
+    docs = docs.filter(d => targets.includes(d.assignedTo));
+  }
 
   return docs;
 }

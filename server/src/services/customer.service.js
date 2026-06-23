@@ -1,7 +1,7 @@
 import { getDb } from './firebase.service.js';
 import { findCustomerByPhone, getCustomerOrders } from './tiendanube.service.js';
 
-const COLLECTION = 'customers';
+const COLLECTION = 'bot-altorancho_customers';
 const TN_CACHE_HOURS = 24;
 
 export async function getOrCreateCustomer(contactId, channel, contactName = null) {
@@ -144,8 +144,15 @@ export function buildCustomerContext(customer) {
   if (customer.firstContactAt) lines.push(`Primera consulta: ${formatDate(customer.firstContactAt)}`);
 
   if (customer.tnOrders?.length) {
-    const last = customer.tnOrders[0];
-    lines.push(`Cliente recurrente: ${customer.tnOrders.length} compras previas. Última: #${last.number} (${last.date ?? '?'}) — $${last.total}.`);
+    lines.push(`\nHistorial de compras en Tienda Nube (${customer.tnOrders.length} pedido/s):`);
+    for (const o of customer.tnOrders) {
+      const parts = [`#${o.number}`, o.date ?? '?', `$${o.total}`];
+      if (o.status) parts.push(`estado: ${o.status}`);
+      if (o.paymentStatus) parts.push(`pago: ${o.paymentStatus}`);
+      if (o.shippingStatus) parts.push(`envío: ${o.shippingStatus}`);
+      if (o.products?.length) parts.push(`productos: ${o.products.join(', ')}`);
+      lines.push(`  - ${parts.join(' | ')}`);
+    }
   } else {
     lines.push('Sin compras registradas en Tienda Nube.');
   }

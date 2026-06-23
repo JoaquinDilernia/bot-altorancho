@@ -8,7 +8,7 @@ const DEFAULT_FAREWELL = 'Hola! Cerramos esta consulta por inactividad. Si neces
 export async function closeInactiveConversations() {
   const db = getDb();
 
-  const configDoc = await db.collection('config').doc('bot_config').get();
+  const configDoc = await db.collection('bot-altorancho_config').doc('bot_config').get();
   const botConfig = configDoc.exists ? configDoc.data() : {};
   const inactiveHours = botConfig.inactiveCloseHours ?? DEFAULT_INACTIVE_HOURS;
   const farewellMsg = botConfig.inactiveFarewellMessage ?? DEFAULT_FAREWELL;
@@ -17,7 +17,7 @@ export async function closeInactiveConversations() {
   cutoff.setHours(cutoff.getHours() - inactiveHours);
 
   // Only close active bot conversations (not already archived, not in human mode)
-  const snap = await db.collection('conversations')
+  const snap = await db.collection('bot-altorancho_conversations')
     .where('status', '==', 'bot')
     .where('humanMode', '==', false)
     .get();

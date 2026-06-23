@@ -1,14 +1,17 @@
 import { Router } from 'express';
-import { validateCredentials, generateToken, updateProfile } from '../services/auth.service.js';
-import { requireAuth } from '../middleware/requireAuth.js';
+import {
+  validateCredentials, generateToken, updateProfile,
+  createUser, listUsers, deleteUser, updateUser,
+} from '../services/auth.service.js';
+import { requireAuth, requireAdmin } from '../middleware/requireAuth.js';
 
 const router = Router();
 
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    const agent = await validateCredentials(username, password);
-    if (!agent) return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
+    const { email, password } = req.body;
+    const agent = await validateCredentials(email, password);
+    if (!agent) return res.status(401).json({ error: 'Email o contraseña incorrectos' });
     const token = generateToken(agent);
     res.json({ token, agent });
   } catch (err) {
@@ -24,7 +27,7 @@ router.put('/profile', requireAuth, async (req, res) => {
   try {
     const { name, currentPassword, newPassword } = req.body;
     if (newPassword) {
-      const valid = await validateCredentials(req.agent.id, currentPassword);
+      const valid = await validateCredentials(req.agent.email, currentPassword);
       if (!valid) return res.status(400).json({ error: 'Contraseña actual incorrecta' });
     }
     const updated = await updateProfile(req.agent.id, {
@@ -33,6 +36,53 @@ router.put('/profile', requireAuth, async (req, res) => {
     });
     const token = generateToken(updated);
     res.json({ agent: updated, token });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Gestión de usuarios (solo admin)
+router.get('/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    res.json(await listUsers());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/users', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { email, name, password, role, department } = req.body;
+    if (!email || !name || !password) return res.status(400).json({ error: 'email, name y password son requeridos' });
+    const user = await createUser({ email, name, password, role, department: department ?? null });
+    res.status(201).json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.put('/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { name, role, department } = req.body;
+    const VALID_ROLES = ['admin', 'atencion_cliente', 'operador'];
+    if (role && !VALID_ROLES.includes(role)) {
+      return res.status(400).json({ error: `Rol inválido. Válidos: ${VALID_ROLES.join(', ')}` });
+    }
+    if (req.params.id === req.agent.id && role && role !== req.agent.role) {
+      return res.status(400).json({ error: 'No podés cambiar tu propio rol' });
+    }
+    const updated = await updateUser(req.params.id, { name, role, department: department !== undefined ? (department ?? null) : undefined });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    if (req.params.id === req.agent.id) return res.status(400).json({ error: 'No podés eliminarte a vos mismo' });
+    await deleteUser(req.params.id);
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

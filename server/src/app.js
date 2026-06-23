@@ -18,8 +18,11 @@ import quickReplyRoutes from './routes/quickreply.routes.js';
 import templateRoutes from './routes/template.routes.js';
 import costsRoutes from './routes/costs.routes.js';
 import { initFirebase } from './services/firebase.service.js';
+import departmentRoutes from './routes/department.routes.js';
+import notificationsRoutes from './routes/notifications.routes.js';
 import { seedAgentsIfNeeded } from './services/auth.service.js';
-import { requireAuth } from './middleware/requireAuth.js';
+import { seedDepartmentsIfNeeded } from './services/department.service.js';
+import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
 import { closeInactiveConversations } from './services/inactivity.service.js';
 
 const app = express();
@@ -28,6 +31,7 @@ const PORT = process.env.PORT || 3001;
 // Init Firebase
 initFirebase();
 seedAgentsIfNeeded().catch(err => console.error('[seed] Error seeding agents:', err));
+seedDepartmentsIfNeeded().catch(err => console.error('[seed] Error seeding departments:', err));
 
 // Inactivity cron: runs every hour, closes bot-handled conversations idle >24h
 cron.schedule('0 * * * *', () => {
@@ -37,8 +41,8 @@ cron.schedule('0 * * * *', () => {
 // Middleware
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://gineza.techdi.com.ar',
-];
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || allowedOrigins.includes(origin)) cb(null, true);
@@ -57,25 +61,31 @@ app.use('/api/webhook', webhookRoutes);
 app.use('/api/auth', authRoutes);
 
 // Routes (protected)
-app.use('/api/knowledge', requireAuth, knowledgeRoutes);
+// Operador can access: conversations (filtered), labels
+// atencion_cliente + admin: all of the below
 app.use('/api/conversations', requireAuth, conversationRoutes);
-app.use('/api/config', requireAuth, configRoutes);
-app.use('/api/tiendanube', requireAuth, tiendaNubeRoutes);
-app.use('/api/customers', requireAuth, customerRoutes);
-app.use('/api/test', requireAuth, testRoutes);
 app.use('/api/labels', requireAuth, labelRoutes);
-app.use('/api/stats', requireAuth, statsRoutes);
-app.use('/api/quick-replies', requireAuth, quickReplyRoutes);
-app.use('/api/templates', requireAuth, templateRoutes);
-app.use('/api/costs', requireAuth, costsRoutes);
+
+// Requires at least atencion_cliente
+app.use('/api/knowledge', requireAtLeastAtencionCliente, knowledgeRoutes);
+app.use('/api/config', requireAtLeastAtencionCliente, configRoutes);
+app.use('/api/tiendanube', requireAtLeastAtencionCliente, tiendaNubeRoutes);
+app.use('/api/customers', requireAtLeastAtencionCliente, customerRoutes);
+app.use('/api/test', requireAtLeastAtencionCliente, testRoutes);
+app.use('/api/stats', requireAtLeastAtencionCliente, statsRoutes);
+app.use('/api/quick-replies', requireAtLeastAtencionCliente, quickReplyRoutes);
+app.use('/api/templates', requireAtLeastAtencionCliente, templateRoutes);
+app.use('/api/costs', requireAtLeastAtencionCliente, costsRoutes);
+app.use('/api/departments', requireAtLeastAtencionCliente, departmentRoutes);
+app.use('/api/notifications', requireAtLeastAtencionCliente, notificationsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: '1.0.0', service: 'bot-gineza' });
+  res.json({ status: 'ok', version: '1.0.0', service: 'bot-altorancho' });
 });
 
 app.listen(PORT, () => {
-  console.log(`[server] BOT-GINEZA corriendo en puerto ${PORT}`);
+  console.log(`[server] BOT-ALTORANCHO corriendo en puerto ${PORT}`);
 });
 
 export default app;
