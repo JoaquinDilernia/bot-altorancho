@@ -49,12 +49,20 @@ export async function seedAgentsIfNeeded() {
   }
 }
 
+const ADMIN_EMAILS = new Set(ADMIN_SEEDS.map(a => a.email));
+
 export async function validateCredentials(email, password) {
   const db = getDb();
-  const doc = await db.collection(COLLECTION).doc(docId(email)).get();
+  const id = docId(email);
+  const doc = await db.collection(COLLECTION).doc(id).get();
   if (!doc.exists) return null;
   const data = doc.data();
   if (data.passwordHash !== hashPassword(password)) return null;
+  // guarantee admin role for seeded admins regardless of Firestore state
+  if (ADMIN_EMAILS.has(id) && data.role !== 'admin') {
+    await db.collection(COLLECTION).doc(id).update({ role: 'admin' });
+    data.role = 'admin';
+  }
   return toPublic(data);
 }
 
