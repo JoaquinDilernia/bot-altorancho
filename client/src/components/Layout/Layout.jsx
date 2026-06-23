@@ -1,7 +1,23 @@
-import { useState } from 'react';
+import { useState, Suspense } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './Layout.module.css';
+
+function PageLoader() {
+  return (
+    <div style={{ padding: '32px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {[160, 100, 220, 140, 180].map((w, i) => (
+        <div key={i} style={{
+          height: 13, width: w, borderRadius: 6,
+          background: 'var(--color-border)',
+          animation: 'skPulse 1.4s ease-in-out infinite',
+          animationDelay: `${i * 0.08}s`,
+        }} />
+      ))}
+      <style>{`@keyframes skPulse{0%,100%{opacity:.4}50%{opacity:1}}`}</style>
+    </div>
+  );
+}
 
 // minRole: undefined = all, 'atencion_cliente' = not operador, 'admin' = only admin
 const NAV_ITEMS = [
@@ -82,7 +98,9 @@ export default function Layout() {
       </aside>
 
       <main className={styles.main}>
-        <Outlet />
+        <Suspense fallback={<PageLoader />}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

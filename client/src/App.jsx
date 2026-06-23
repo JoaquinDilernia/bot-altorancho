@@ -58,17 +58,17 @@ function AppRoutes() {
         <Route path="/login" element={agent ? <Navigate to="/dashboard" replace /> : <Login />} />
         <Route path="/" element={agent ? <Layout /> : <Navigate to="/login" replace />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard"    element={<Dashboard />} />
+          <Route path="dashboard"     element={<Dashboard />} />
           <Route path="conversations" element={<Conversations />} />
-          <Route path="simulator"    element={<Simulator />} />
-          <Route path="knowledge"    element={<KnowledgeBase />} />
-          <Route path="config"       element={<Config />} />
-          <Route path="labels"       element={<Labels />} />
-          <Route path="profile"      element={<Profile />} />
-          <Route path="stats"        element={<Stats />} />
+          <Route path="simulator"     element={<Simulator />} />
+          <Route path="knowledge"     element={<KnowledgeBase />} />
+          <Route path="config"        element={<Config />} />
+          <Route path="labels"        element={<Labels />} />
+          <Route path="profile"       element={<Profile />} />
+          <Route path="stats"         element={<Stats />} />
           <Route path="quick-replies" element={<QuickReplies />} />
-          <Route path="templates"    element={<Templates />} />
-          <Route path="costs"        element={<Costs />} />
+          <Route path="templates"     element={<Templates />} />
+          <Route path="costs"         element={<Costs />} />
           <Route path="departments"   element={<Departments />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="users"         element={<Users />} />
