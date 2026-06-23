@@ -84,6 +84,13 @@ export async function updateUser(id, { name, role, department } = {}) {
   return toPublic(doc.data());
 }
 
+export async function getAgentById(id) {
+  const db = getDb();
+  const doc = await db.collection(COLLECTION).doc(docId(id)).get();
+  if (!doc.exists) return null;
+  return toPublic(doc.data());
+}
+
 export async function updateProfile(agentId, { name, password } = {}) {
   const db = getDb();
   const update = { updatedAt: new Date() };

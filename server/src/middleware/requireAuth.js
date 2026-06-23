@@ -1,11 +1,14 @@
-import { verifyToken } from '../services/auth.service.js';
+import { verifyToken, getAgentById } from '../services/auth.service.js';
 
-export function requireAuth(req, res, next) {
+export async function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   const token = header?.startsWith('Bearer ') ? header.slice(7) : req.query.token;
   if (!token) return res.status(401).json({ error: 'No autenticado' });
   try {
-    req.agent = verifyToken(token);
+    const decoded = verifyToken(token);
+    const agent = await getAgentById(decoded.id);
+    if (!agent) return res.status(401).json({ error: 'Usuario no encontrado' });
+    req.agent = agent;
     next();
   } catch {
     res.status(401).json({ error: 'Token inválido o expirado' });
