@@ -67,17 +67,17 @@ app.use('/api/conversations', requireAuth, conversationRoutes);
 app.use('/api/labels', requireAuth, labelRoutes);
 
 // Requires at least atencion_cliente
-app.use('/api/knowledge', requireAtLeastAtencionCliente, knowledgeRoutes);
-app.use('/api/config', requireAtLeastAtencionCliente, configRoutes);
-app.use('/api/tiendanube', requireAtLeastAtencionCliente, tiendaNubeRoutes);
-app.use('/api/customers', requireAtLeastAtencionCliente, customerRoutes);
-app.use('/api/test', requireAtLeastAtencionCliente, testRoutes);
-app.use('/api/stats', requireAtLeastAtencionCliente, statsRoutes);
-app.use('/api/quick-replies', requireAtLeastAtencionCliente, quickReplyRoutes);
-app.use('/api/templates', requireAtLeastAtencionCliente, templateRoutes);
-app.use('/api/costs', requireAtLeastAtencionCliente, costsRoutes);
-app.use('/api/departments', requireAtLeastAtencionCliente, departmentRoutes);
-app.use('/api/notifications', requireAtLeastAtencionCliente, notificationsRoutes);
+app.use('/api/knowledge',     requireAuth, requireAtLeastAtencionCliente, knowledgeRoutes);
+app.use('/api/config',        requireAuth, requireAtLeastAtencionCliente, configRoutes);
+app.use('/api/tiendanube',    requireAuth, requireAtLeastAtencionCliente, tiendaNubeRoutes);
+app.use('/api/customers',     requireAuth, requireAtLeastAtencionCliente, customerRoutes);
+app.use('/api/test',          requireAuth, requireAtLeastAtencionCliente, testRoutes);
+app.use('/api/stats',         requireAuth, requireAtLeastAtencionCliente, statsRoutes);
+app.use('/api/quick-replies', requireAuth, requireAtLeastAtencionCliente, quickReplyRoutes);
+app.use('/api/templates',     requireAuth, requireAtLeastAtencionCliente, templateRoutes);
+app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsRoutes);
+app.use('/api/departments',   requireAuth, requireAtLeastAtencionCliente, departmentRoutes);
+app.use('/api/notifications',  requireAuth, requireAtLeastAtencionCliente, notificationsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
