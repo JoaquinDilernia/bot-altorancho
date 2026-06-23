@@ -37,6 +37,9 @@ export async function seedAgentsIfNeeded() {
       createdAt: new Date(),
     });
     console.log('[auth] Admin seedeado:', adminEmail);
+  } else if (!doc.data().role) {
+    await db.collection(COLLECTION).doc(id).update({ role: 'admin' });
+    console.log('[auth] Admin migrado a role: admin');
   }
 }
 
