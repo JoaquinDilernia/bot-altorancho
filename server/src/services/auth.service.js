@@ -22,24 +22,30 @@ function toPublic(data) {
   };
 }
 
+const ADMIN_SEEDS = [
+  { email: 'joaquin.dilernia@altorancho.com', name: 'Joaquín Di Lernia', password: 'altolett123' },
+  { email: 'jdilernia99@gmail.com',           name: 'Joaquín Di Lernia', password: 'altolett123' },
+];
+
 export async function seedAgentsIfNeeded() {
   const db = getDb();
-  const adminEmail = 'joaquin.dilernia@altorancho.com';
-  const id = docId(adminEmail);
-  const doc = await db.collection(COLLECTION).doc(id).get();
-  if (!doc.exists) {
-    await db.collection(COLLECTION).doc(id).set({
-      id,
-      email: adminEmail,
-      name: 'Joaquín Di Lernia',
-      role: 'admin',
-      passwordHash: hashPassword('altolett123'),
-      createdAt: new Date(),
-    });
-    console.log('[auth] Admin seedeado:', adminEmail);
-  } else if (!doc.data().role) {
-    await db.collection(COLLECTION).doc(id).update({ role: 'admin' });
-    console.log('[auth] Admin migrado a role: admin');
+  for (const admin of ADMIN_SEEDS) {
+    const id = docId(admin.email);
+    const doc = await db.collection(COLLECTION).doc(id).get();
+    if (!doc.exists) {
+      await db.collection(COLLECTION).doc(id).set({
+        id,
+        email: admin.email,
+        name: admin.name,
+        role: 'admin',
+        passwordHash: hashPassword(admin.password),
+        createdAt: new Date(),
+      });
+      console.log('[auth] Admin seedeado:', admin.email);
+    } else if (doc.data().role !== 'admin') {
+      await db.collection(COLLECTION).doc(id).update({ role: 'admin' });
+      console.log('[auth] Admin migrado a role: admin:', admin.email);
+    }
   }
 }
 
