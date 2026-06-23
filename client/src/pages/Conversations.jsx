@@ -25,6 +25,7 @@ const FILTERS = [
   { value: 'mine',     label: 'Mis casos' },
   { value: 'urgent',   label: 'Urgentes' },
   { value: 'archived', label: 'Archivos' },
+  { value: 'teams',    label: 'Equipos',  minRole: 'atencion_cliente' },
 ];
 
 function StatusChip({ status }) {
@@ -218,6 +219,7 @@ export default function Conversations() {
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [nameMap, setNameMap] = useState({});
+  const [teamsDeptFilter, setTeamsDeptFilter] = useState('');
   const [apiWindowError, setApiWindowError] = useState(false);
   const [templateSendOpen, setTemplateSendOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -626,6 +628,10 @@ export default function Conversations() {
     } else if (filter === 'urgent') {
       if (isConvArchived) return false;
       if (!convUrgent) return false;
+    } else if (filter === 'teams') {
+      if (isConvArchived) return false;
+      if (!convHuman) return false;
+      if (teamsDeptFilter && c.assignedTo !== teamsDeptFilter) return false;
     } else if (filter === 'all') {
       if (isConvArchived) return false;
     } else if (filter === 'archived') {
@@ -658,16 +664,33 @@ export default function Conversations() {
             onChange={e => setSearch(e.target.value)}
           />
           <div className={styles.chips}>
-            {FILTERS.map(f => (
+            {FILTERS.filter(f => {
+              if (!f.minRole) return true;
+              if (f.minRole === 'atencion_cliente') return agent?.role === 'admin' || agent?.role === 'atencion_cliente';
+              if (f.minRole === 'admin') return agent?.role === 'admin';
+              return true;
+            }).map(f => (
               <button
                 key={f.value}
-                onClick={() => setFilter(f.value)}
+                onClick={() => { setFilter(f.value); if (f.value !== 'teams') setTeamsDeptFilter(''); }}
                 className={`${styles.filterChip} ${filter === f.value ? styles.filterChipActive : ''}`}
               >
                 {f.label}
               </button>
             ))}
           </div>
+          {filter === 'teams' && departments.length > 0 && (
+            <select
+              className={styles.labelSelect}
+              value={teamsDeptFilter}
+              onChange={e => setTeamsDeptFilter(e.target.value)}
+            >
+              <option value="">Todos los departamentos</option>
+              {departments.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          )}
           {allLabels.length > 0 && (
             <select
               className={styles.labelSelect}
