@@ -1,4 +1,4 @@
-import { useState, Suspense } from 'react';
+import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './Layout.module.css';
@@ -98,9 +98,7 @@ export default function Layout() {
       </aside>
 
       <main className={styles.main}>
-        <Suspense fallback={<PageLoader />}>
-          <Outlet />
-        </Suspense>
+        <Outlet />
       </main>
     </div>
   );
