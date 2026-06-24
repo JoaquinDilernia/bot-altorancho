@@ -102,9 +102,9 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
+  const { knowledgeBase = '', orderInfo = null, stockInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, customerContext, availableLabels, departments);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, stockInfo, customerContext, availableLabels, departments);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -118,7 +118,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return response.content[0].text;
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, customerContext, availableLabels = [], departments = []) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, stockInfo, customerContext, availableLabels = [], departments = []) {
   const botName = botConfig.botName || 'Asistente';
   const businessName = botConfig.businessName || 'Alto Rancho';
   const personality = botConfig.botPersonality ||
@@ -137,14 +137,36 @@ Cuando tenés información de un pedido, la compartís directamente sin pedir ve
   if (orderInfo) {
     prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
     prompt += `\n\nGuía para interpretar el pedido:
+- tipo "WEB" → pedido de e-commerce (TiendaNube u otro canal web). Puede tener número de seguimiento.
+- tipo "LOCAL" → pedido hecho en el local físico. El campo "local" indica la sucursal (Belgrano, Las Lomas, Alcorta, Rolón Local, etc.).
 - pago "pagado" + envio "enviado" → en camino, compartí el tracking si hay.
 - pago "pagado" + envio "en preparación" o "pendiente de preparación" → se está preparando, próximamente se envía.
 - pago "pagado" + envio "entregado" → ya fue entregado.
 - pago "pendiente de pago" → falta confirmar el pago.
 - estado "cancelado" → pedido cancelado, derivar si preguntan por reembolso.
+- Para pedidos de tipo LOCAL, el flujo de envío/entrega puede ser distinto al de e-commerce — puede ser retiro en local o entrega directa.
 - Si hay tracking, siempre compartilo directamente sin que el cliente lo pida.
 - Si hay nota en el pedido, tenerla en cuenta para dar contexto.
 - El método de envío puede ser Andreani u otro — no lo inventes si no está en los datos.`;
+  }
+  if (stockInfo) {
+    prompt += `\n\n--- STOCK EN SUCURSALES ---\n${stockInfo}`;
+    prompt += `\n\nGuía para interpretar la disponibilidad:
+- "Disponible" → hay stock suficiente en ese local.
+- "Quedan pocos" → hay unidades pero puede agotarse pronto. Avisale al cliente que el stock puede variar y que conviene confirmar antes de ir.
+- "No disponible" → sin stock en ese local al momento de la consulta.
+- Nunca menciones cantidades numéricas — solo usás las etiquetas anteriores.
+- Siempre agregá el disclaimer: "El stock puede variar por las ventas del local."
+
+Si el producto es de EXHIBICIÓN (aparece "Producto de exhibición" en los datos):
+- "Exhibido" → el cliente puede ir a verlo al local.
+- "No exhibido" → no está en exposición en ese local.
+- Aclarále que los productos de exhibición se pueden ver en el local pero la compra es solo online.
+
+IMPORTANTE — Local Alcorta:
+- Alcorta NO es un local tradicional: es un stand de iluminación (Light Studio) dentro de un shopping.
+- Se puede comprar cualquier producto con disponibilidad en Alcorta, pero NO se puede ver ni probar en persona (a menos que sea un producto de iluminación o esté exhibido).
+- Cuando haya disponibilidad en Alcorta para un producto no relacionado con iluminación, avisale al cliente que puede comprarlo allí pero que no va a poder verlo en persona.`;
   }
   if (availableLabels.length) {
     prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).

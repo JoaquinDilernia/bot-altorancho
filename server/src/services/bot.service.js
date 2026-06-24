@@ -12,7 +12,7 @@ import {
   addLabelToConversation,
 } from './conversation.service.js';
 import { findOrder, findOrdersByEmail, formatOrderStatus } from './tiendanube.service.js';
-import { findOdooOrder, findOdooOrdersByContact, formatOdooOrder } from './odoo.service.js';
+import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64 } from './meta.service.js';
 import {
   getOrCreateCustomer,
@@ -36,6 +36,21 @@ const ORDER_PATTERNS = [
   /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
   /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
   /cuándo\s*(llega|llega)/i,
+];
+
+const STOCK_PATTERNS = [
+  /\bstock\b/i,
+  /\bdisponib/i,
+  /\bexhibici/i,
+  /tienen\s+(?:el|la|los|las)\s+\w/i,
+  /hay\s+(?:algún|alguna|algun|alguna)\b/i,
+  /en\s+(?:el\s+)?local/i,
+  /en\s+belgrano/i,
+  /en\s+(?:las?\s*)?lomas/i,
+  /en\s+alcorta/i,
+  /en\s+rol[oó]n/i,
+  /en\s+sucursal/i,
+  /en\s+(?:la\s+)?tienda/i,
 ];
 
 const URGENCY_KEYWORDS = [
@@ -205,11 +220,14 @@ export async function processIncomingMessage(msg) {
     ? (Date.now() - (conversation.updatedAt._seconds ? conversation.updatedAt._seconds * 1000 : new Date(conversation.updatedAt).getTime())) < TEN_DAYS_MS
     : false;
 
-  const orderInfo = await resolveOrderContext(text ?? '', customer);
+  const [orderContext, stockInfo] = await Promise.all([
+    resolveOrderContext(text ?? '', customer),
+    resolveStockContext(text ?? ''),
+  ]);
   const customerContext = buildCustomerContext(customer);
 
-  if (orderInfo.tnCustomer) {
-    linkCustomerFromOrder(from, orderInfo.tnCustomer).catch(err =>
+  if (orderContext.tnCustomer) {
+    linkCustomerFromOrder(from, orderContext.tnCustomer).catch(err =>
       console.error('[bot] linkCustomer error:', err.message)
     );
   }
@@ -217,7 +235,8 @@ export async function processIncomingMessage(msg) {
   console.log(`[bot] Llamando a Claude para ${from}`);
   const botReply = await generateBotResponse(text ?? '', history, {
     knowledgeBase,
-    orderInfo: orderInfo.orderInfo,
+    orderInfo: orderContext.orderInfo,
+    stockInfo,
     customerContext,
     availableLabels: availableLabels.map(l => l.name),
     botConfig,
@@ -273,6 +292,38 @@ export async function processIncomingMessage(msg) {
     } catch (sendErr) {
       console.error(`[bot] ERROR enviando IG a ${from}:`, sendErr.response?.data ?? sendErr.message);
     }
+  }
+}
+
+async function resolveStockContext(text) {
+  if (!text || !STOCK_PATTERNS.some(re => re.test(text))) return null;
+
+  try {
+    const products = await searchProducts(text);
+    if (!products?.length) return null;
+
+    let sku = null;
+    let productName = null;
+    for (const p of products) {
+      const variants = p.variants ?? [];
+      const withSku = variants.find(v => v.sku);
+      if (withSku) {
+        sku = withSku.sku;
+        const n = p.name;
+        productName = typeof n === 'string' ? n
+          : (n?.es ?? n?.en ?? Object.values(n ?? {})[0] ?? 'Producto');
+        break;
+      }
+    }
+
+    if (!sku) return null;
+
+    const stockResult = await getStockBySku(sku);
+    console.log(`[bot] stock para SKU ${sku}:`, stockResult);
+    return formatStockInfo(productName, sku, stockResult);
+  } catch (err) {
+    console.error('[bot] resolveStockContext error:', err.message);
+    return null;
   }
 }
 
