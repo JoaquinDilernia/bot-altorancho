@@ -63,32 +63,55 @@ async function getOrderLines(lineIds) {
 
 /**
  * Busca un pedido por nombre/número en Odoo.
- * Soporta: "S08121", "TN1999675391", "08121", "1999675391"
+ * Soporta todos los formatos:
+ * - "S08121"        → pedido de local físico
+ * - "TN1999675391"  → pedido web importado desde TiendaNube (ID interno de TN)
+ * - "51689"         → número puro; genera S51689, S08121... para locales
+ * - "1999675391"    → ID interno de TN; genera TN1999675391
  */
 export async function findOdooOrder(query) {
   const q = String(query).trim();
 
-  // Construir variantes del nombre a buscar
   const candidates = new Set([q.toUpperCase()]);
+
   if (/^\d+$/.test(q)) {
-    candidates.add(`TN${q}`);  // TiendaNube: TN1999675391
-    candidates.add(`S${q.padStart(5, '0')}`); // Odoo: S08121
-    candidates.add(`S${q}`);
+    // Puede ser un ID interno de TiendaNube → TN1999675391
+    candidates.add(`TN${q}`);
+    // Puede ser número de local con padding → S08121 (si tiene ≤5 dígitos)
+    if (q.length <= 6) {
+      candidates.add(`S${q.padStart(5, '0')}`);
+      candidates.add(`S${q}`);
+    }
   }
-  // Si empieza con TN o S, agregar versión sin prefijo para buscar en TN también
-  if (/^TN\d+$/i.test(q)) candidates.add(q.replace(/^TN/i, ''));
-  if (/^S\d+$/i.test(q)) candidates.add(q.replace(/^S/i, ''));
+
+  // S08121 → buscar también la versión sin padding y sin prefijo
+  if (/^S\d+$/i.test(q)) {
+    const digits = q.slice(1);
+    candidates.add(`S${digits.replace(/^0+/, '') || '0'}`);
+    candidates.add(`S${digits.padStart(5, '0')}`);
+    candidates.add(digits); // sin prefijo por si acaso
+  }
+
+  // TN1999675391 → buscar también sin prefijo (el ID puro)
+  if (/^TN\d+$/i.test(q)) {
+    candidates.add(q.replace(/^TN/i, ''));
+  }
 
   const domain = [['name', 'in', [...candidates]]];
+  console.log(`[odoo] findOdooOrder "${q}" → candidatos:`, [...candidates]);
 
   try {
     const results = await callOdoo('sale.order', 'search_read',
       [domain], { fields: ORDER_FIELDS, limit: 5 });
 
-    if (!results?.length) return null;
+    if (!results?.length) {
+      console.log(`[odoo] Sin resultados para "${q}"`);
+      return null;
+    }
 
-    // Preferir el que haga match exacto
+    // Preferir match exacto; si hay varios, tomar el primero
     const exact = results.find(o => candidates.has(o.name.toUpperCase())) ?? results[0];
+    console.log(`[odoo] Pedido encontrado: ${exact.name} (warehouse: ${exact.warehouse_id?.[1] ?? '-'})`);
     const lines = await getOrderLines(exact.order_line);
     return { order: exact, lines };
   } catch (err) {

@@ -11,7 +11,7 @@ import {
   setUrgentFlag,
   addLabelToConversation,
 } from './conversation.service.js';
-import { findOrder, findOrdersByEmail, formatOrderStatus } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus } from './tiendanube.service.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64 } from './meta.service.js';
 import {
@@ -31,7 +31,7 @@ const ORDER_PATTERNS = [
   new RegExp(`orden\\s*#?\\s*(${ORDER_REF})`, 'i'),
   new RegExp(`compra\\s*#?\\s*(${ORDER_REF})`, 'i'),
   new RegExp(`número\\s*#?\\s*(${ORDER_REF})`, 'i'),
-  new RegExp(`^(${ORDER_REF})$`, 'i'),
+  new RegExp(`^#?(${ORDER_REF})$`, 'i'),
   /tracking/i,
   /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
   /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
@@ -331,7 +331,6 @@ async function resolveOrderContext(text, customer) {
   const trimmed = text.trim();
 
   if (trimmed.includes('@')) {
-    // Buscar en TiendaNube y Odoo en paralelo por email
     const [tnOrders, odooOrders] = await Promise.all([
       findOrdersByEmail(trimmed),
       findOdooOrdersByContact(trimmed),
@@ -353,47 +352,92 @@ async function resolveOrderContext(text, customer) {
       const orderRef = match[1] ?? null;
 
       if (orderRef) {
-        // Buscar en Odoo primero (tiene todos los pedidos incluyendo los de TN)
-        // y en TiendaNube en paralelo para obtener tracking URL si existe
-        const [odooResult, tnOrder] = await Promise.all([
-          findOdooOrder(orderRef),
-          /^\d+$/.test(orderRef) ? findOrder(orderRef) : Promise.resolve(null),
-        ]);
-
-        if (odooResult) {
-          const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
-          // Enriquecer con tracking de TN si está disponible
-          if (tnOrder?.shipping_tracking_url) {
-            odooInfo.tracking = tnOrder.shipping_tracking_url;
-          }
-          return { orderInfo: odooInfo, tnCustomer: tnOrder?.customer ?? null };
-        }
-        if (tnOrder) {
-          return { orderInfo: formatOrderStatus(tnOrder), tnCustomer: tnOrder.customer ?? null };
-        }
-        return { orderInfo: null, tnCustomer: null };
+        return await searchOrderByRef(orderRef);
       }
 
-      // Sin número → usar última orden del perfil del cliente
+      // Sin número → usar última orden guardada del perfil del cliente
       const lastNumber = customer?.tnOrders?.[0]?.number;
       if (lastNumber) {
         console.log(`[bot] Sin número en mensaje, usando orden guardada del cliente: #${lastNumber}`);
-        const [odooResult, tnOrder] = await Promise.all([
-          findOdooOrder(String(lastNumber)),
-          findOrder(String(lastNumber)),
-        ]);
-        if (odooResult) {
-          const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
-          if (tnOrder?.shipping_tracking_url) odooInfo.tracking = tnOrder.shipping_tracking_url;
-          return { orderInfo: odooInfo, tnCustomer: tnOrder?.customer ?? null };
-        }
-        if (tnOrder) {
-          return { orderInfo: formatOrderStatus(tnOrder), tnCustomer: tnOrder.customer ?? null };
-        }
+        return await searchOrderByRef(String(lastNumber));
       }
 
       return { orderInfo: null, tnCustomer: null };
     }
+  }
+  return { orderInfo: null, tnCustomer: null };
+}
+
+/**
+ * Enruta la búsqueda de un pedido según el formato de la referencia:
+ *
+ * - Número puro (51689)    → TiendaNube primero (número visible para el cliente en pedidos web)
+ *                            Si TN lo encuentra, intenta enriquecer con Odoo via TN{id_interno}
+ *                            Si TN no lo encuentra, fallback a Odoo (puede ser local con número numérico)
+ * - S-prefijo (S08121)     → Odoo directo (pedido de local físico)
+ * - TN-prefijo (TN123...)  → Odoo directo (referencia interna de pedido web importado)
+ * - Alfanumérico genérico  → Odoo directo
+ */
+async function searchOrderByRef(orderRef) {
+  const isPureNumber = /^\d+$/.test(orderRef);
+  const isOdooLocal  = /^S\d+$/i.test(orderRef);
+  const isOdooTN     = /^TN\d+$/i.test(orderRef);
+
+  // --- Número puro: pedido web de TiendaNube ---
+  if (isPureNumber) {
+    const tnOrder = await findOrder(orderRef);
+
+    if (tnOrder) {
+      console.log(`[bot] Pedido #${orderRef} encontrado en TiendaNube (TN id: ${tnOrder.id})`);
+      const tnFormatted = formatOrderStatus(tnOrder);
+
+      // Intentar enriquecer con Odoo usando el ID interno de TiendaNube
+      try {
+        const odooResult = await findOdooOrder(`TN${tnOrder.id}`);
+        if (odooResult) {
+          const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
+          if (tnOrder.shipping_tracking_url) odooInfo.tracking = tnOrder.shipping_tracking_url;
+          return { orderInfo: odooInfo, tnCustomer: tnOrder.customer ?? null };
+        }
+      } catch (err) {
+        console.warn(`[bot] No se pudo enriquecer TN${tnOrder.id} en Odoo:`, err.message);
+      }
+
+      return { orderInfo: tnFormatted, tnCustomer: tnOrder.customer ?? null };
+    }
+
+    // Fallback: puede ser un pedido de local con número numérico en Odoo
+    console.log(`[bot] Pedido #${orderRef} no encontrado en TiendaNube, buscando en Odoo...`);
+    const odooResult = await findOdooOrder(orderRef);
+    if (odooResult) {
+      return { orderInfo: formatOdooOrder(odooResult.order, odooResult.lines), tnCustomer: null };
+    }
+
+    return { orderInfo: null, tnCustomer: null };
+  }
+
+  // --- Referencia de Odoo (S... o TN...) ---
+  if (isOdooLocal || isOdooTN) {
+    const odooResult = await findOdooOrder(orderRef);
+    if (odooResult) {
+      const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
+      // Si es un pedido TN en Odoo, intentar obtener tracking URL desde TiendaNube
+      if (isOdooTN) {
+        const tnId = orderRef.replace(/^TN/i, '');
+        try {
+          const tnOrder = await getTNOrderById(tnId);
+          if (tnOrder?.shipping_tracking_url) odooInfo.tracking = tnOrder.shipping_tracking_url;
+        } catch { /* tracking es opcional */ }
+      }
+      return { orderInfo: odooInfo, tnCustomer: null };
+    }
+    return { orderInfo: null, tnCustomer: null };
+  }
+
+  // --- Alfanumérico genérico → Odoo ---
+  const odooResult = await findOdooOrder(orderRef);
+  if (odooResult) {
+    return { orderInfo: formatOdooOrder(odooResult.order, odooResult.lines), tnCustomer: null };
   }
   return { orderInfo: null, tnCustomer: null };
 }

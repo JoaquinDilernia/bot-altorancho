@@ -13,9 +13,17 @@ const client = axios.create({
 
 const ORDER_FIELDS = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,note,created_at';
 
+const TN_PAGE_SIZE = 200; // máximo que permite TiendaNube
+
 /**
- * Busca un pedido por número exacto o por email del cliente.
- * Busca en todos los estados (open, closed, cancelled) para encontrar pedidos archivados.
+ * Busca un pedido por número exacto (ej: 51689) o email.
+ *
+ * Estrategia dual:
+ * Fase 1 — q= en paralelo por los 3 estados: cubre pedidos recientes indexados.
+ *           TiendaNube indexa para q= con cierto delay y solo hasta N pedidos atrás.
+ * Fase 2 — Paginación directa: si fase 1 falla, calibra con el pedido más reciente
+ *           y busca por página estimada ± 2 para encontrar pedidos más viejos.
+ *
  * @param {string} query - Número de pedido o email
  * @returns {Promise<object|null>}
  */
@@ -23,7 +31,6 @@ export async function findOrder(query) {
   const num = String(query.trim());
 
   if (num.includes('@')) {
-    // Búsqueda por email → primer resultado
     try {
       const { data } = await client.get('/orders', {
         params: { q: num, fields: ORDER_FIELDS, per_page: 5 },
@@ -35,26 +42,87 @@ export async function findOrder(query) {
     }
   }
 
-  // Búsqueda por número: primero sin filtro de status (cubre open + recientes)
-  // Si no aparece, busca explícitamente en closed y cancelled en paralelo
+  // --- Fase 1: búsqueda por q= (rápida, cubre pedidos recientes) ---
   try {
-    const [openRes, closedRes, cancelledRes] = await Promise.all([
+    const [r1, r2, r3] = await Promise.all([
       client.get('/orders', { params: { q: num, fields: ORDER_FIELDS, per_page: 50 } }),
       client.get('/orders', { params: { q: num, fields: ORDER_FIELDS, per_page: 50, status: 'closed' } }),
       client.get('/orders', { params: { q: num, fields: ORDER_FIELDS, per_page: 50, status: 'cancelled' } }),
     ]);
 
-    const allOrders = [
-      ...(openRes.data ?? []),
-      ...(closedRes.data ?? []),
-      ...(cancelledRes.data ?? []),
-    ];
+    const seen = new Set();
+    const allOrders = [...(r1.data ?? []), ...(r2.data ?? []), ...(r3.data ?? [])]
+      .filter(o => !seen.has(o.id) && seen.add(o.id));
 
-    const exact = allOrders.find(o => String(o.number) === num) ?? null;
-    console.log(`[tiendanube] findOrder #${num}: ${allOrders.length} resultados totales, match: ${exact?.number ?? 'none'} (status: ${exact?.status ?? '-'})`);
-    return exact;
+    const qMatch = allOrders.find(o => String(o.number) === num)
+      ?? allOrders.find(o => String(o.id) === num)
+      ?? null;
+
+    if (qMatch) {
+      console.log(`[tiendanube] findOrder #${num}: encontrado via q= (id:${qMatch.id}, status:${qMatch.status})`);
+      return qMatch;
+    }
+  } catch { /* continuar a fase 2 */ }
+
+  // --- Fase 2: paginación directa para pedidos más viejos ---
+  const targetNum = parseInt(num, 10);
+  if (isNaN(targetNum)) return null;
+
+  try {
+    // Calibrar con el pedido más reciente para estimar la página
+    const { data: calibData } = await client.get('/orders', {
+      params: { per_page: 1, fields: 'number' },
+    });
+    const latestNum = calibData?.[0]?.number;
+
+    if (!latestNum || targetNum > latestNum) {
+      console.log(`[tiendanube] findOrder #${num}: número no existe (último: #${latestNum})`);
+      return null;
+    }
+
+    if (targetNum === latestNum) {
+      // Era el primer pedido, calibración ya lo trajo
+      const { data: exact } = await client.get('/orders', { params: { per_page: 1, fields: ORDER_FIELDS } });
+      return exact?.[0] ?? null;
+    }
+
+    // Estimación: pedidos ordenados de más nuevo a más viejo en páginas de TN_PAGE_SIZE
+    // Página 1 = los TN_PAGE_SIZE más recientes, página 2 = los siguientes, etc.
+    const diff = latestNum - targetNum;
+    const estimatedPage = Math.max(1, Math.ceil(diff / TN_PAGE_SIZE));
+
+    // Buscar en página estimada ± 2 en paralelo (incluyendo página 1 para pedidos recientes)
+    const pages = [estimatedPage - 1, estimatedPage, estimatedPage + 1, estimatedPage + 2]
+      .filter(p => p >= 1);
+
+    console.log(`[tiendanube] findOrder #${num}: q= sin resultados, buscando via paginación (último:#${latestNum}, diff:${diff}, páginas:${pages.join(',')})`);
+
+    const pageResults = await Promise.all(
+      pages.map(p =>
+        client.get('/orders', { params: { page: p, per_page: TN_PAGE_SIZE, fields: ORDER_FIELDS } })
+          .then(r => r.data ?? [])
+          .catch(() => [])
+      )
+    );
+
+    const pageSeen = new Set();
+    const pageOrders = pageResults.flat()
+      .filter(o => !pageSeen.has(o.id) && pageSeen.add(o.id));
+
+    const pageMatch = pageOrders.find(o => o.number === targetNum) ?? null;
+
+    if (pageMatch) {
+      console.log(`[tiendanube] findOrder #${num}: encontrado via paginación (id:${pageMatch.id}, status:${pageMatch.status})`);
+    } else if (pageOrders.length) {
+      const nums = pageOrders.map(o => o.number);
+      console.log(`[tiendanube] findOrder #${num}: no encontrado. Rango paginado: #${Math.min(...nums)}-#${Math.max(...nums)}`);
+    } else {
+      console.log(`[tiendanube] findOrder #${num}: paginación devolvió vacío`);
+    }
+
+    return pageMatch;
   } catch (err) {
-    console.error('[tiendanube] Error buscando pedido:', err.message, err.response?.status, err.response?.data);
+    console.error('[tiendanube] findOrder fase2 error:', err.message, err.response?.status);
     return null;
   }
 }
