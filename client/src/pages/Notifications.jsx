@@ -1,427 +1,321 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Notifications.module.css';
 
-const VARIABLE_OPTIONS = [
-  { value: 'orderNumber', label: 'Número de pedido' },
-  { value: 'customerName', label: 'Nombre del cliente' },
-  { value: 'storeName', label: 'Nombre de la tienda (Alto Rancho)' },
-];
-
-const STORES = ['Belgrano', 'Las Lomas', 'Alcorta'];
-
-const DEFAULT_CONFIG = {
-  templateName: '',
-  language: 'es_AR',
-  variables: ['orderNumber', 'customerName'],
+const STATUS_LABELS = {
+  unpacked:   'Pendiente de preparar',
+  unshipped:  'Armado / Listo para retirar',
+  fulfilling: 'En preparación',
+  shipped:    'Enviado (correo)',
+  delivered:  'Entregado',
 };
 
-export default function Notifications() {
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [config, setConfig] = useState(DEFAULT_CONFIG);
-  const [storeFilter, setStoreFilter] = useState('');
-  const [phase, setPhase] = useState('list'); // 'list' | 'sending' | 'result'
-  const [result, setResult] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
+const STATUS_FILTER_OPTIONS = [
+  { value: 'unpacked',  label: 'Pendiente de preparar' },
+  { value: 'unshipped', label: 'Armado / Listo para retirar' },
+];
 
-  const loadOrders = useCallback(async (store = '') => {
+export default function Notifications() {
+  const [orders, setOrders]             = useState([]);
+  const [templates, setTemplates]       = useState([]);
+  const [loading, setLoading]           = useState(false);
+  const [error, setError]               = useState('');
+  const [statuses, setStatuses]         = useState(['unpacked', 'unshipped']);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [selected, setSelected]         = useState(new Set());
+  const [templateName, setTemplateName] = useState('');
+  const [paramTemplate, setParamTemplate] = useState(['']);
+  const [sending, setSending]           = useState(false);
+  const [results, setResults]           = useState(null);
+
+  useEffect(() => { loadTemplates(); }, []);
+
+  async function loadTemplates() {
+    try {
+      const r = await authFetch(BASE_URL + '/api/templates');
+      const data = await r.json();
+      const approved = (Array.isArray(data) ? data : []).filter(t => t.metaStatus === 'APPROVED');
+      setTemplates(approved);
+    } catch { /* non-critical */ }
+  }
+
+  async function fetchOrders() {
     setLoading(true);
+    setSelected(new Set());
+    setResults(null);
     setError('');
     try {
-      const qs = store ? `?store=${encodeURIComponent(store)}` : '';
-      const res = await authFetch(BASE_URL + '/api/notifications/pickup-ready' + qs);
-      if (!res.ok) throw new Error((await res.json()).error);
-      const data = await res.json();
+      const r = await authFetch(BASE_URL + '/api/notifications/pickup-orders');
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error);
       setOrders(data.orders ?? []);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  const loadHistory = useCallback(async () => {
-    try {
-      const res = await authFetch(BASE_URL + '/api/notifications/history');
-      if (res.ok) setHistory((await res.json()).history ?? []);
-    } catch { /* non-critical */ }
-  }, []);
-
-  useEffect(() => { loadOrders(storeFilter); loadHistory(); }, [loadOrders, loadHistory]);
-
-  function handleStoreFilter(store) {
-    const next = store === storeFilter ? '' : store;
-    setStoreFilter(next);
-    setPhase('list');
-    loadOrders(next);
   }
 
-  function setVariable(index, value) {
-    setConfig(prev => {
-      const vars = [...prev.variables];
-      vars[index] = value;
-      return { ...prev, variables: vars };
+  const filtered = orders.filter(o => {
+    if (statuses.length && !statuses.includes(o.shippingStatus)) return false;
+    if (branchFilter && !o.branch?.toLowerCase().includes(branchFilter.toLowerCase())) return false;
+    return true;
+  });
+
+  function toggleStatus(s) {
+    setStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  }
+
+  function toggleOrder(id) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
     });
   }
 
-  function addVariable() {
-    if (config.variables.length >= 4) return;
-    setConfig(prev => ({ ...prev, variables: [...prev.variables, 'orderNumber'] }));
+  function toggleAll() {
+    if (selected.size === filtered.length && filtered.length > 0) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map(o => o.id)));
+    }
   }
 
-  function removeVariable(index) {
-    setConfig(prev => ({ ...prev, variables: prev.variables.filter((_, i) => i !== index) }));
+  function onTemplateChange(name) {
+    setTemplateName(name);
+    const tpl = templates.find(t => t.name === name);
+    if (!tpl) { setParamTemplate(['']); return; }
+    const count = (tpl.bodyText?.match(/\{\{[^}]+\}\}/g) ?? []).length;
+    setParamTemplate(Array(Math.max(count, 1)).fill(''));
   }
 
   async function handleSend() {
-    if (!config.templateName.trim()) {
-      setError('Ingresá el nombre de la plantilla antes de enviar.');
-      return;
-    }
-    const withPhone = orders.filter(o => o.hasPhone);
-    if (withPhone.length === 0) {
-      setError('Ningún pedido tiene número de teléfono disponible.');
-      return;
-    }
+    if (!templateName) { setError('Seleccioná un template'); return; }
+    if (!selected.size) { setError('Seleccioná al menos un pedido'); return; }
 
+    const tpl = templates.find(t => t.name === templateName);
+    if (!tpl) return;
+
+    const ordersToSend = filtered.filter(o => selected.has(o.id));
+    setSending(true);
+    setResults(null);
     setError('');
-    setPhase('sending');
-
-    const recipients = withPhone.map(o => ({
-      phone: o.phone,
-      orderNumber: o.number,
-      customerName: o.customerName,
-    }));
-
     try {
-      const res = await authFetch(BASE_URL + '/api/notifications/send', {
+      const r = await authFetch(BASE_URL + '/api/notifications/send-bulk', {
         method: 'POST',
         body: {
-          templateName: config.templateName.trim(),
-          language: config.language,
-          variables: config.variables,
-          recipients,
+          orders: ordersToSend,
+          templateName,
+          languageCode: tpl.language ?? 'es_AR',
+          paramTemplate,
         },
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setResult(data);
-      setPhase('result');
-      loadHistory();
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error);
+      setResults(data);
     } catch (err) {
       setError(err.message);
-      setPhase('list');
+    } finally {
+      setSending(false);
     }
   }
 
-  function reset() {
-    setPhase('list');
-    setResult(null);
-    loadOrders();
-  }
-
-  const withPhone = orders.filter(o => o.hasPhone);
-  const withoutPhone = orders.filter(o => !o.hasPhone);
+  const tplBody = templates.find(t => t.name === templateName)?.bodyText ?? '';
 
   return (
     <div className={styles.page}>
       <header className={styles.header}>
         <div>
           <h1 className={styles.title}>Notificaciones masivas</h1>
-          <p className={styles.subtitle}>
-            Pedidos con retiro en local listos para retirar. Enviá una plantilla de WhatsApp a todos de una vez.
-          </p>
-        </div>
-        <div className={styles.headerActions}>
-          <button className={styles.ghostBtn} onClick={() => { setShowHistory(v => !v); }}>
-            {showHistory ? 'Ocultar historial' : 'Ver historial'}
-          </button>
-          {phase === 'list' && (
-            <button className={styles.ghostBtn} onClick={() => loadOrders(storeFilter)} disabled={loading}>
-              Actualizar
-            </button>
-          )}
+          <p className={styles.subtitle}>Enviá templates de WhatsApp a pedidos con retiro en local</p>
         </div>
       </header>
 
-      {showHistory && <HistoryPanel history={history} onClose={() => setShowHistory(false)} />}
-
-      <div className={styles.body}>
-        {phase === 'result' ? (
-          <ResultPanel result={result} onReset={reset} />
-        ) : phase === 'sending' ? (
-          <SendingPanel total={withPhone.length} />
-        ) : (
-          <>
-            {error && <div className={styles.errorBanner}>{error}</div>}
-
-            {/* Template config */}
-            <section className={styles.card}>
-              <h2 className={styles.cardTitle}>Plantilla a enviar</h2>
-              <p className={styles.cardHint}>
-                La plantilla debe estar aprobada en Meta Business Manager. El nombre es el que figura en el panel de Meta (ej: <code>retiro_listo</code>).
-              </p>
-              <div className={styles.configGrid}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Nombre de la plantilla</label>
+      {/* Filters */}
+      <div className={styles.filtersCard}>
+        <div className={styles.filtersRow}>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Estado del envío</label>
+            <div className={styles.checkRow}>
+              {STATUS_FILTER_OPTIONS.map(s => (
+                <label key={s.value} className={styles.checkLabel}>
                   <input
-                    className={styles.input}
-                    value={config.templateName}
-                    onChange={e => setConfig(p => ({ ...p, templateName: e.target.value }))}
-                    placeholder="ej: retiro_listo"
+                    type="checkbox"
+                    checked={statuses.includes(s.value)}
+                    onChange={() => toggleStatus(s.value)}
                   />
-                </div>
-                <div className={styles.field}>
-                  <label className={styles.label}>Idioma</label>
-                  <select
-                    className={styles.input}
-                    value={config.language}
-                    onChange={e => setConfig(p => ({ ...p, language: e.target.value }))}
-                  >
-                    <option value="es_AR">Español (Argentina)</option>
-                    <option value="es">Español</option>
-                    <option value="en_US">Inglés</option>
+                  {s.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className={styles.filterGroup}>
+            <label className={styles.filterLabel}>Filtrar por sucursal</label>
+            <input
+              className={styles.filterInput}
+              value={branchFilter}
+              onChange={e => setBranchFilter(e.target.value)}
+              placeholder="Belgrano, San Isidro, Nordelta…"
+            />
+          </div>
+          <button className={styles.btnFetch} onClick={fetchOrders} disabled={loading}>
+            {loading ? 'Cargando…' : 'Buscar pedidos'}
+          </button>
+        </div>
+        {error && <div className={styles.errorBanner}>{error}</div>}
+      </div>
+
+      {orders.length > 0 && (
+        <>
+          {/* Orders table */}
+          <div className={styles.tableCard}>
+            <div className={styles.tableToolbar}>
+              <label className={styles.checkLabel}>
+                <input
+                  type="checkbox"
+                  checked={filtered.length > 0 && selected.size === filtered.length}
+                  onChange={toggleAll}
+                />
+                Seleccionar todos ({filtered.length})
+              </label>
+              {selected.size > 0 && (
+                <span className={styles.selectedCount}>{selected.size} seleccionado{selected.size > 1 ? 's' : ''}</span>
+              )}
+            </div>
+
+            {filtered.length === 0 ? (
+              <p className={styles.emptyFilter}>Ningún pedido coincide con los filtros actuales.</p>
+            ) : (
+              <div className={styles.tableWrap}>
+                <table className={styles.table}>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 32 }}></th>
+                      <th>Pedido</th>
+                      <th>Cliente</th>
+                      <th>Teléfono</th>
+                      <th>Sucursal</th>
+                      <th>Estado</th>
+                      <th>Total</th>
+                      <th>Resultado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map(o => {
+                      const res = results?.results?.find(r => r.number === o.number);
+                      return (
+                        <tr
+                          key={o.id}
+                          className={`${selected.has(o.id) ? styles.rowSelected : ''} ${res ? styles[`row_${res.status}`] : ''}`}
+                          onClick={() => toggleOrder(o.id)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <td onClick={e => e.stopPropagation()}>
+                            <input type="checkbox" checked={selected.has(o.id)} onChange={() => toggleOrder(o.id)} />
+                          </td>
+                          <td className={styles.orderNum}>#{o.number}</td>
+                          <td>{o.customer.name}</td>
+                          <td className={styles.phone}>
+                            {o.customer.phone
+                              ? <span className={styles.phoneOk}>{o.customer.phone}</span>
+                              : <span className={styles.phoneMissing}>Sin tel.</span>
+                            }
+                          </td>
+                          <td className={styles.branch}>{o.branch}</td>
+                          <td>
+                            <span className={`${styles.statusChip} ${styles[`chip_${o.shippingStatus}`]}`}>
+                              {STATUS_LABELS[o.shippingStatus] ?? o.shippingStatus}
+                            </span>
+                          </td>
+                          <td className={styles.total}>${o.total}</td>
+                          <td>
+                            {res && (
+                              <span className={`${styles.resultBadge} ${styles[`result_${res.status}`]}`}>
+                                {res.status === 'sent' ? '✓ Enviado' : res.status === 'skipped' ? '— Omitido' : `✗ ${res.reason}`}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Send panel */}
+          {selected.size > 0 && (
+            <div className={styles.sendPanel}>
+              <h3 className={styles.sendTitle}>Enviar a {selected.size} pedido{selected.size > 1 ? 's' : ''}</h3>
+
+              <div className={styles.field}>
+                <label className={styles.label}>Template aprobado</label>
+                {templates.length === 0 ? (
+                  <p className={styles.cardHint}>No hay templates aprobados. Creá uno en la sección Plantillas y esperá la aprobación de Meta.</p>
+                ) : (
+                  <select className={styles.input} value={templateName} onChange={e => onTemplateChange(e.target.value)}>
+                    <option value="">— Seleccioná un template —</option>
+                    {templates.map(t => (
+                      <option key={t.id ?? t.name} value={t.name}>{t.displayName ?? t.name} ({t.language})</option>
+                    ))}
                   </select>
-                </div>
+                )}
               </div>
 
-              <div className={styles.variablesSection}>
-                <div className={styles.variablesHeader}>
-                  <span className={styles.label}>Variables de la plantilla</span>
-                  {config.variables.length < 4 && (
-                    <button className={styles.addVarBtn} onClick={addVariable}>+ Agregar</button>
-                  )}
+              {tplBody && (
+                <div className={styles.previewBox}>
+                  <div className={styles.previewLabel}>Vista previa del cuerpo</div>
+                  <p className={styles.previewText}>{tplBody}</p>
                 </div>
-                <div className={styles.variablesList}>
-                  {config.variables.map((v, i) => (
-                    <div key={i} className={styles.variableRow}>
-                      <span className={styles.varTag}>{`{{${i + 1}}}`}</span>
-                      <select
-                        className={styles.varSelect}
-                        value={v}
-                        onChange={e => setVariable(i, e.target.value)}
-                      >
-                        {VARIABLE_OPTIONS.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
-                      <button className={styles.removeVarBtn} onClick={() => removeVariable(i)} title="Quitar">×</button>
+              )}
+
+              {paramTemplate.length > 0 && templateName && (
+                <div className={styles.paramsGrid}>
+                  <p className={styles.cardHint}>
+                    Completá los valores de las variables. Podés usar: <code>{'{{name}}'}</code>, <code>{'{{number}}'}</code>, <code>{'{{branch}}'}</code>, <code>{'{{total}}'}</code> — o un texto fijo.
+                  </p>
+                  {paramTemplate.map((p, i) => (
+                    <div key={i} className={styles.field}>
+                      <label className={styles.label}>{`Variable {{${i + 1}}}`}</label>
+                      <input
+                        className={styles.input}
+                        value={p}
+                        onChange={e => setParamTemplate(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                        placeholder={`ej: {{name}}, {{number}}, texto fijo…`}
+                      />
                     </div>
                   ))}
                 </div>
-                {config.variables.length > 0 && (
-                  <p className={styles.previewHint}>
-                    Preview: {config.variables.map((v, i) => {
-                      const opt = VARIABLE_OPTIONS.find(o => o.value === v);
-                      return `{{${i + 1}}} → ${opt?.label ?? v}`;
-                    }).join(' · ')}
-                  </p>
-                )}
-              </div>
-            </section>
-
-            {/* Orders list */}
-            <section className={styles.card}>
-              <div className={styles.ordersHeader}>
-                <h2 className={styles.cardTitle}>
-                  Pedidos listos para retirar
-                  {!loading && (
-                    <span className={styles.countBadge}>{orders.length}</span>
-                  )}
-                </h2>
-                {!loading && withPhone.length > 0 && (
-                  <button
-                    className={styles.sendBtn}
-                    onClick={handleSend}
-                    disabled={!config.templateName.trim()}
-                  >
-                    Enviar a {withPhone.length} {withPhone.length === 1 ? 'pedido' : 'pedidos'}
-                  </button>
-                )}
-              </div>
-
-              <div className={styles.storeFilters}>
-                <button
-                  className={`${styles.storeChip} ${storeFilter === '' ? styles.storeChipActive : ''}`}
-                  onClick={() => handleStoreFilter('')}
-                >
-                  Todos los locales
-                </button>
-                {STORES.map(s => (
-                  <button
-                    key={s}
-                    className={`${styles.storeChip} ${storeFilter === s ? styles.storeChipActive : ''}`}
-                    onClick={() => handleStoreFilter(s)}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-
-              {loading ? (
-                <OrdersSkeleton />
-              ) : orders.length === 0 ? (
-                <div className={styles.emptyState}>
-                  <span className={styles.emptyIcon}>📦</span>
-                  <p>No hay pedidos con retiro en local listos para retirar.</p>
-                  <p className={styles.emptyHint}>Se muestran pedidos pagados con estado "empaquetado" y tipo de envío "retiro en local".</p>
-                </div>
-              ) : (
-                <>
-                  <div className={styles.tableWrap}>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Pedido</th>
-                          <th>Cliente</th>
-                          <th>Teléfono</th>
-                          <th>Local</th>
-                          <th>Productos</th>
-                          <th>Fecha</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {orders.map(order => (
-                          <tr key={order.id} className={!order.hasPhone ? styles.rowNoPhone : ''}>
-                            <td className={styles.orderNum}>#{order.number}</td>
-                            <td>{order.customerName}</td>
-                            <td>
-                              {order.hasPhone
-                                ? <span className={styles.phoneOk}>{order.phone}</span>
-                                : <span className={styles.phoneMissing}>Sin teléfono</span>
-                              }
-                            </td>
-                            <td className={styles.storeCell}>{order.store ?? <span className={styles.phoneMissing}>—</span>}</td>
-                            <td className={styles.products}>{order.products || '—'}</td>
-                            <td className={styles.date}>{order.createdAt ? new Date(order.createdAt).toLocaleDateString('es-AR') : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  {withoutPhone.length > 0 && (
-                    <p className={styles.warnPhones}>
-                      {withoutPhone.length} {withoutPhone.length === 1 ? 'pedido no tiene' : 'pedidos no tienen'} teléfono en TiendaNube y {withoutPhone.length === 1 ? 'será omitido' : 'serán omitidos'}.
-                    </p>
-                  )}
-                </>
               )}
-            </section>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
-function SendingPanel({ total }) {
-  return (
-    <div className={styles.sendingPanel}>
-      <div className={styles.sendingSpinner} />
-      <p className={styles.sendingText}>Enviando plantilla a {total} {total === 1 ? 'pedido' : 'pedidos'}...</p>
-      <p className={styles.sendingHint}>No cerrés esta página.</p>
-    </div>
-  );
-}
+              {results && (
+                <div className={styles.resultSummary}>
+                  <span className={styles.hSent}>✓ {results.summary.sent} enviados</span>
+                  {results.summary.errors > 0 && <span className={styles.hFailed}>✗ {results.summary.errors} errores</span>}
+                  {results.summary.skipped > 0 && <span className={styles.hSkipped}>— {results.summary.skipped} sin teléfono</span>}
+                </div>
+              )}
 
-function ResultPanel({ result, onReset }) {
-  const successRate = result.sent + result.failed > 0
-    ? Math.round((result.sent / (result.sent + result.failed)) * 100)
-    : 0;
-
-  return (
-    <div className={styles.resultPanel}>
-      <div className={styles.resultHeader}>
-        <h2 className={styles.resultTitle}>Envío completado</h2>
-        <button className={styles.ghostBtn} onClick={onReset}>Volver</button>
-      </div>
-
-      <div className={styles.resultStats}>
-        <div className={`${styles.resultStat} ${styles.statSent}`}>
-          <span className={styles.resultNum}>{result.sent}</span>
-          <span className={styles.resultLabel}>Enviados</span>
-        </div>
-        <div className={`${styles.resultStat} ${styles.statFailed}`}>
-          <span className={styles.resultNum}>{result.failed}</span>
-          <span className={styles.resultLabel}>Fallidos</span>
-        </div>
-        <div className={`${styles.resultStat} ${styles.statSkipped}`}>
-          <span className={styles.resultNum}>{result.skipped}</span>
-          <span className={styles.resultLabel}>Sin teléfono</span>
-        </div>
-        <div className={`${styles.resultStat} ${styles.statRate}`}>
-          <span className={styles.resultNum}>{successRate}%</span>
-          <span className={styles.resultLabel}>Tasa de éxito</span>
-        </div>
-      </div>
-
-      {result.details?.filter(d => d.status === 'failed').length > 0 && (
-        <div className={styles.failedList}>
-          <h3 className={styles.failedTitle}>Pedidos fallidos</h3>
-          {result.details.filter(d => d.status === 'failed').map((d, i) => (
-            <div key={i} className={styles.failedRow}>
-              <span>#{d.orderNumber}</span>
-              <span className={styles.failedPhone}>{d.phone}</span>
-              <span className={styles.failedReason}>{d.reason}</span>
+              <button className={styles.sendBtn} onClick={handleSend} disabled={sending || !templateName}>
+                {sending
+                  ? `Enviando (${selected.size} mensajes)…`
+                  : `Enviar ${selected.size} mensaje${selected.size > 1 ? 's' : ''} por WhatsApp`
+                }
+              </button>
             </div>
-          ))}
+          )}
+        </>
+      )}
+
+      {!loading && orders.length === 0 && (
+        <div className={styles.emptyState}>
+          <span className={styles.emptyIcon}>📦</span>
+          <p>Hacé clic en "Buscar pedidos" para cargar los retiros pendientes.</p>
+          <p className={styles.cardHint}>Se detectan pedidos con retiro en local por tipo de envío o nombre de sucursal.</p>
         </div>
       )}
-    </div>
-  );
-}
-
-function HistoryPanel({ history, onClose }) {
-  if (history.length === 0) return (
-    <div className={styles.historyPanel}>
-      <div className={styles.historyHeader}>
-        <h3 className={styles.historyTitle}>Historial de envíos</h3>
-        <button className={styles.closeBtn} onClick={onClose}>×</button>
-      </div>
-      <p className={styles.historyEmpty}>Sin envíos registrados.</p>
-    </div>
-  );
-
-  return (
-    <div className={styles.historyPanel}>
-      <div className={styles.historyHeader}>
-        <h3 className={styles.historyTitle}>Historial de envíos</h3>
-        <button className={styles.closeBtn} onClick={onClose}>×</button>
-      </div>
-      <div className={styles.historyList}>
-        {history.map(h => (
-          <div key={h.id} className={styles.historyRow}>
-            <div className={styles.historyMeta}>
-              <span className={styles.historyTemplate}>{h.templateName}</span>
-              <span className={styles.historyDate}>{h.sentAt ? new Date(h.sentAt).toLocaleString('es-AR') : '—'}</span>
-            </div>
-            <div className={styles.historyNums}>
-              <span className={styles.hSent}>{h.totalSent} enviados</span>
-              {h.totalFailed > 0 && <span className={styles.hFailed}>{h.totalFailed} fallidos</span>}
-              {h.totalSkipped > 0 && <span className={styles.hSkipped}>{h.totalSkipped} omitidos</span>}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function OrdersSkeleton() {
-  return (
-    <div className={styles.skeletonRows}>
-      {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className={styles.skeletonRow} style={{ animationDelay: `${i * 80}ms` }}>
-          <div className={styles.skLine} style={{ width: 60 }} />
-          <div className={styles.skLine} style={{ width: 140 }} />
-          <div className={styles.skLine} style={{ width: 120 }} />
-          <div className={styles.skLine} style={{ width: 200 }} />
-          <div className={styles.skLine} style={{ width: 80 }} />
-        </div>
-      ))}
     </div>
   );
 }
