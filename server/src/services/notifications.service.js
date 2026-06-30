@@ -10,6 +10,13 @@ const TN_HEADERS = {
 
 const PICKUP_FIELDS = 'id,number,status,payment_status,shipping_status,shipping_pickup_type,shipping_option,customer,products,created_at';
 
+// Local branch names for Alto Rancho
+const STORES = [
+  { key: 'Belgrano',  keywords: ['belgrano'] },
+  { key: 'Las Lomas', keywords: ['lomas'] },
+  { key: 'Alcorta',   keywords: ['alcorta', 'light studio'] },
+];
+
 // Normalizes Argentine mobile numbers to E.164 without '+' for the WhatsApp API.
 function normalizePhone(raw) {
   if (!raw) return null;
@@ -23,11 +30,31 @@ function normalizePhone(raw) {
   return null;
 }
 
+// TiendaNube may return shipping_option as a plain string or as { name, ... }
+function shippingOptionName(order) {
+  const raw = order.shipping_option;
+  if (!raw) return '';
+  return typeof raw === 'string' ? raw : (raw.name ?? '');
+}
+
 function isPickupOrder(order) {
-  // TiendaNube marks pickup orders with shipping_pickup_type or a shipping option named "retiro"
   if (order.shipping_pickup_type) return true;
-  const name = (order.shipping_option?.name ?? '').toLowerCase();
-  return name.includes('retiro') || name.includes('pickup') || name.includes('local');
+  const name = shippingOptionName(order).toLowerCase();
+  return (
+    name.includes('retiro') ||
+    name.includes('pickup') ||
+    name.includes('local') ||
+    name.includes('sucursal') ||
+    name.includes('tienda')
+  );
+}
+
+function extractStore(order) {
+  const name = shippingOptionName(order).toLowerCase();
+  for (const store of STORES) {
+    if (store.keywords.some(kw => name.includes(kw))) return store.key;
+  }
+  return null;
 }
 
 function extractProducts(order) {
@@ -40,9 +67,8 @@ function extractProducts(order) {
     .join(', ');
 }
 
-export async function getPickupReadyOrders() {
-  // TiendaNube's "fulfilling" status = empaquetado (packed and ready in their fulfillment flow).
-  // We also include "packed" in case they use the newer fulfillments API nomenclature.
+export async function getPickupReadyOrders({ store } = {}) {
+  // "fulfilling" = being packed. "shipped" = ready for pickup in TiendaNube's pickup flow.
   const params = {
     fields: PICKUP_FIELDS,
     payment_status: 'paid',
@@ -53,18 +79,24 @@ export async function getPickupReadyOrders() {
 
   const results = await Promise.allSettled([
     axios.get(`${TN_BASE}/orders`, { headers: TN_HEADERS, params: { ...params, shipping_status: 'fulfilling' } }),
-    axios.get(`${TN_BASE}/orders`, { headers: TN_HEADERS, params: { ...params, shipping_status: 'packed' } }),
+    axios.get(`${TN_BASE}/orders`, { headers: TN_HEADERS, params: { ...params, shipping_status: 'shipped' } }),
   ]);
 
   const seen = new Set();
   const orders = [];
 
   for (const r of results) {
-    if (r.status === 'rejected') continue;
+    if (r.status === 'rejected') {
+      console.error('[notifications] TiendaNube fetch error:', r.reason?.message);
+      continue;
+    }
     for (const order of r.value.data ?? []) {
       if (seen.has(order.id)) continue;
       seen.add(order.id);
       if (!isPickupOrder(order)) continue;
+
+      const orderStore = extractStore(order);
+      if (store && orderStore !== store) continue;
 
       const phone = normalizePhone(order.customer?.phone);
       orders.push({
@@ -73,6 +105,7 @@ export async function getPickupReadyOrders() {
         customerName: order.customer?.name ?? 'Cliente',
         phone,
         hasPhone: !!phone,
+        store: orderStore,
         products: extractProducts(order),
         shippingStatus: order.shipping_status,
         createdAt: order.created_at,

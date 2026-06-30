@@ -8,6 +8,8 @@ const VARIABLE_OPTIONS = [
   { value: 'storeName', label: 'Nombre de la tienda (Alto Rancho)' },
 ];
 
+const STORES = ['Belgrano', 'Las Lomas', 'Alcorta'];
+
 const DEFAULT_CONFIG = {
   templateName: '',
   language: 'es_AR',
@@ -19,16 +21,18 @@ export default function Notifications() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [config, setConfig] = useState(DEFAULT_CONFIG);
+  const [storeFilter, setStoreFilter] = useState('');
   const [phase, setPhase] = useState('list'); // 'list' | 'sending' | 'result'
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  const loadOrders = useCallback(async () => {
+  const loadOrders = useCallback(async (store = '') => {
     setLoading(true);
     setError('');
     try {
-      const res = await authFetch(BASE_URL + '/api/notifications/pickup-ready');
+      const qs = store ? `?store=${encodeURIComponent(store)}` : '';
+      const res = await authFetch(BASE_URL + '/api/notifications/pickup-ready' + qs);
       if (!res.ok) throw new Error((await res.json()).error);
       const data = await res.json();
       setOrders(data.orders ?? []);
@@ -46,7 +50,14 @@ export default function Notifications() {
     } catch { /* non-critical */ }
   }, []);
 
-  useEffect(() => { loadOrders(); loadHistory(); }, [loadOrders, loadHistory]);
+  useEffect(() => { loadOrders(storeFilter); loadHistory(); }, [loadOrders, loadHistory]);
+
+  function handleStoreFilter(store) {
+    const next = store === storeFilter ? '' : store;
+    setStoreFilter(next);
+    setPhase('list');
+    loadOrders(next);
+  }
 
   function setVariable(index, value) {
     setConfig(prev => {
@@ -129,7 +140,7 @@ export default function Notifications() {
             {showHistory ? 'Ocultar historial' : 'Ver historial'}
           </button>
           {phase === 'list' && (
-            <button className={styles.ghostBtn} onClick={loadOrders} disabled={loading}>
+            <button className={styles.ghostBtn} onClick={() => loadOrders(storeFilter)} disabled={loading}>
               Actualizar
             </button>
           )}
@@ -232,6 +243,24 @@ export default function Notifications() {
                 )}
               </div>
 
+              <div className={styles.storeFilters}>
+                <button
+                  className={`${styles.storeChip} ${storeFilter === '' ? styles.storeChipActive : ''}`}
+                  onClick={() => handleStoreFilter('')}
+                >
+                  Todos los locales
+                </button>
+                {STORES.map(s => (
+                  <button
+                    key={s}
+                    className={`${styles.storeChip} ${storeFilter === s ? styles.storeChipActive : ''}`}
+                    onClick={() => handleStoreFilter(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+
               {loading ? (
                 <OrdersSkeleton />
               ) : orders.length === 0 ? (
@@ -249,6 +278,7 @@ export default function Notifications() {
                           <th>Pedido</th>
                           <th>Cliente</th>
                           <th>Teléfono</th>
+                          <th>Local</th>
                           <th>Productos</th>
                           <th>Fecha</th>
                         </tr>
@@ -264,6 +294,7 @@ export default function Notifications() {
                                 : <span className={styles.phoneMissing}>Sin teléfono</span>
                               }
                             </td>
+                            <td className={styles.storeCell}>{order.store ?? <span className={styles.phoneMissing}>—</span>}</td>
                             <td className={styles.products}>{order.products || '—'}</td>
                             <td className={styles.date}>{order.createdAt ? new Date(order.createdAt).toLocaleDateString('es-AR') : '—'}</td>
                           </tr>

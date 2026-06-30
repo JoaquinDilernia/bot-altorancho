@@ -67,8 +67,8 @@ function parseEscalationMarker(text, departments = []) {
     re: new RegExp(`\\[ESCALAR_${d.id.toUpperCase()}\\]`, 'i'),
     assignTo: d.id,
   }));
-  // Always include generic fallback
-  markers.push({ re: /\[ESCALAR\]/i, assignTo: null });
+  // Generic fallback always routes to atencion (never leaves assignedTo null)
+  markers.push({ re: /\[ESCALAR\]/i, assignTo: 'atencion' });
 
   for (const { re, assignTo } of markers) {
     if (!re.test(text)) continue;

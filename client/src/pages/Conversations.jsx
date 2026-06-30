@@ -108,7 +108,7 @@ function MsgStatusIcon({ msgStatus }) {
 function MessageBubble({ msg, onRetry }) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
-  const token = localStorage.getItem('gineza_token');
+  const token = localStorage.getItem('altorancho_token');
   const mediaProxyUrl = msg.mediaId
     ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}`
     : null;

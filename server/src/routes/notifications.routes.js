@@ -10,9 +10,11 @@ const router = Router();
 router.use(requireAuth);
 
 // GET /api/notifications/pickup-ready — list of packed pickup orders from TiendaNube
+// Optional query param: ?store=Belgrano|Las+Lomas|Alcorta
 router.get('/pickup-ready', async (req, res) => {
   try {
-    const orders = await getPickupReadyOrders();
+    const { store } = req.query;
+    const orders = await getPickupReadyOrders({ store: store || undefined });
     res.json({ orders });
   } catch (err) {
     console.error('[notifications] pickup-ready error:', err.message);

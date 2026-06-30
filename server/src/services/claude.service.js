@@ -34,12 +34,17 @@ Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando
   return `
 IMPORTANTE — ESCALADA: Cuando la consulta requiere atención humana, usá UNO de estos marcadores en una línea separada (NUNCA pongas otro texto en esa misma línea):
 ${lines}
-- [ESCALAR] — para reclamos graves, clientes muy enojados u otras situaciones urgentes sin categoría clara.
+
+REGLA CRÍTICA: Cuando no sabés a qué departamento específico derivar, usá SIEMPRE [ESCALAR_ATENCION] — jamás dejes la consulta sin departamento asignado. [ESCALAR_ATENCION] es el equipo de atención general y el punto de entrada para cualquier situación que no encaje en otro departamento.
 
 El texto de tu respuesta (antes o después del marcador) es lo que le llega al cliente — avisale que lo derivás y que puede haber una pequeña demora. El marcador es invisible para el cliente.
 Ejemplo correcto:
 "Entiendo, te paso con el equipo de logística ahora mismo. Puede tardar unos minutos, ¡pero te van a ayudar enseguida!
 [ESCALAR_LOGISTICA]"
+
+Ejemplo para casos generales o dudosos:
+"Perfecto, te paso con nuestro equipo de atención al cliente para que puedan ayudarte mejor.
+[ESCALAR_ATENCION]"
 
 IMPORTANTE — CIERRE: Si la consulta está completamente resuelta y el cliente se despidió, empezá tu respuesta con [CERRAR].
 Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando quieras."

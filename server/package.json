@@ -1,7 +1,7 @@
 {
-  "name": "bot-gineza-server",
+  "name": "bot-altorancho-server",
   "version": "1.0.0",
-  "description": "Bot conversacional WhatsApp/Instagram para Gineza - Backend",
+  "description": "Bot conversacional WhatsApp/Instagram para Alto Rancho - Backend",
   "type": "module",
   "main": "src/app.js",
   "scripts": {

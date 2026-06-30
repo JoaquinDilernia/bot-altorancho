@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-const APP_TITLE = 'Gineza';
+const APP_TITLE = 'Alto Rancho';
 
 function playBeep(type = 'normal') {
   try {
@@ -61,7 +61,7 @@ export function useNotifications(conversations) {
           new Notification(notifTitle, {
             body: conv.lastMessage || 'Nuevo mensaje recibido',
             icon: '/favicon.ico',
-            tag: `gineza-${conv.id}`,
+            tag: `altorancho-${conv.id}`,
           });
         }
         return;
@@ -91,7 +91,7 @@ export function useNotifications(conversations) {
         new Notification(title, {
           body,
           icon: '/favicon.ico',
-          tag: `gineza-${conv.id}`,
+          tag: `altorancho-${conv.id}`,
         });
       }
     });
