@@ -79,10 +79,16 @@
   gap: var(--space-5);
 }
 
-/* KPI row */
+/* KPI rows */
 .kpiRow {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-4);
+}
+
+.kpiRow3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--space-4);
 }
 
@@ -115,6 +121,12 @@
 .kpiSub {
   font-size: var(--font-size-xs);
   color: var(--color-text-faint);
+}
+
+.kpiHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+  font-style: italic;
 }
 
 /* Sections */

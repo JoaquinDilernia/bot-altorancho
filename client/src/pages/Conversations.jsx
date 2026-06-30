@@ -24,9 +24,14 @@ const FILTERS = [
   { value: 'bot',      label: 'Bot' },
   { value: 'mine',     label: 'Mis casos' },
   { value: 'urgent',   label: 'Urgentes' },
+  { value: 'sla',      label: 'SLA ⚠' },
   { value: 'archived', label: 'Archivos' },
   { value: 'teams',    label: 'Equipos',  minRole: 'atencion_cliente' },
 ];
+
+const SLA_WARN_MS  = 15 * 60 * 1000;  // 15 min → amarillo
+const SLA_ALERT_MS = 30 * 60 * 1000;  // 30 min → naranja
+const SLA_CRIT_MS  = 60 * 60 * 1000;  // 60 min → rojo
 
 function StatusChip({ status }) {
   const cfg = STATUS_CONFIG[status] ?? { label: status, cls: 'bot' };
@@ -95,6 +100,22 @@ function hoursAgo(ts) {
   return (Date.now() - d.getTime()) / (1000 * 60 * 60);
 }
 
+// Returns ms the client has been waiting for an agent response (0 if not waiting)
+function getSlaWaitMs(conv) {
+  if (!conv.humanMode) return 0;
+  // Prefer the precise waitingSince field; fall back to lastClientMessageAt
+  const since = conv.waitingSince ?? conv.lastClientMessageAt;
+  const d = tsToDate(since);
+  return d ? Math.max(0, Date.now() - d.getTime()) : 0;
+}
+
+function slaColor(waitMs) {
+  if (waitMs >= SLA_CRIT_MS)  return '#ef4444';
+  if (waitMs >= SLA_ALERT_MS) return '#f97316';
+  if (waitMs >= SLA_WARN_MS)  return '#eab308';
+  return null;
+}
+
 // Delivery status icon for agent messages
 function MsgStatusIcon({ msgStatus }) {
   if (!msgStatus || msgStatus === 'sent') return <span className={styles.msgStatus}>✓</span>;
@@ -146,6 +167,8 @@ function ConvItem({ conv, active, onClick, labelMap }) {
   const isUrgent = conv.urgent;
   const isInsistent = (conv.consecutiveClientMessages ?? 0) >= 3;
   const isWaiting = (conv.consecutiveClientMessages ?? 0) > 0 && conv.lastClientMessageAt;
+  const waitMs = getSlaWaitMs(conv);
+  const slaBadgeColor = slaColor(waitMs);
 
   return (
     <button
@@ -158,7 +181,15 @@ function ConvItem({ conv, active, onClick, labelMap }) {
           <div className={styles.itemIndicators}>
             {isUrgent && <span className={styles.urgentFlagBadge} title="Urgente">⚡</span>}
             {isInsistent && <span className={styles.insistentBadge} title="Cliente insistente — escribió varias veces sin respuesta">⚠</span>}
-            {isWaiting && <span className={styles.waitTimeBadge} title="Tiempo esperando respuesta">⏳{formatAge(conv.lastClientMessageAt)}</span>}
+            {isWaiting && (
+              <span
+                className={styles.waitTimeBadge}
+                title="Tiempo esperando respuesta de agente"
+                style={slaBadgeColor ? { background: slaBadgeColor + '22', color: slaBadgeColor, borderColor: slaBadgeColor + '66' } : undefined}
+              >
+                ⏳{formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
+              </span>
+            )}
           </div>
           {conv.updatedAt && <span className={styles.itemAge}>{formatAge(conv.updatedAt)}</span>}
           {conv.unread > 0 && <span className={styles.itemUnread}>{conv.unread}</span>}
@@ -628,6 +659,11 @@ export default function Conversations() {
     } else if (filter === 'urgent') {
       if (isConvArchived) return false;
       if (!convUrgent) return false;
+    } else if (filter === 'sla') {
+      if (isConvArchived) return false;
+      if (!convHuman) return false;
+      // Only show if client has been waiting >= 10 min
+      if (getSlaWaitMs(c) < 10 * 60 * 1000) return false;
     } else if (filter === 'teams') {
       if (isConvArchived) return false;
       if (!convHuman) return false;
@@ -646,6 +682,11 @@ export default function Conversations() {
     }
     return true;
   });
+
+  // SLA view: sort by waiting time descending (longest wait first)
+  if (filter === 'sla') {
+    filtered.sort((a, b) => getSlaWaitMs(b) - getSlaWaitMs(a));
+  }
 
   return (
     <div className={styles.page}>

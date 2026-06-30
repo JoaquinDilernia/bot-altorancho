@@ -45,7 +45,8 @@ export async function appendMessage(contactId, message) {
   const docRef = db.collection(COLLECTION).doc(contactId);
 
   const doc = await docRef.get();
-  const current = doc.exists ? doc.data().messages ?? [] : [];
+  const docData = doc.exists ? doc.data() : {};
+  const current = docData.messages ?? [];
   const updated = [...current, { ...message, timestamp: new Date() }].slice(-200);
 
   const extra = {};
@@ -53,9 +54,19 @@ export async function appendMessage(contactId, message) {
     extra.unread = admin.firestore.FieldValue.increment(1);
     extra.lastClientMessageAt = new Date();
     extra.consecutiveClientMessages = admin.firestore.FieldValue.increment(1);
+    // SLA: start waiting timer when client writes to an agent-handled conversation
+    if (docData.humanMode && !docData.waitingSince) {
+      extra.waitingSince = new Date();
+    }
   } else {
     // Any non-user message (bot or agent) resets the consecutive counter
     extra.consecutiveClientMessages = 0;
+    // SLA: response received — clear waiting timer
+    if (docData.waitingSince) extra.waitingSince = null;
+    // Track first agent response after escalation (for response-time metrics)
+    if (message.role === 'admin' && docData.humanMode && !docData.firstAgentResponseAt) {
+      extra.firstAgentResponseAt = new Date();
+    }
   }
 
   await docRef.update({ messages: updated, updatedAt: new Date(), ...extra });
@@ -69,10 +80,12 @@ export async function getConversationHistory(contactId) {
 
 export async function updateConversationStatus(contactId, status) {
   const db = getDb();
-  await db.collection(COLLECTION).doc(contactId).update({
-    status,
-    updatedAt: new Date(),
-  });
+  const update = { status, updatedAt: new Date() };
+  if (status === 'resolved' || status === 'bot_archived') {
+    update.resolvedAt = new Date();
+    update.waitingSince = null;
+  }
+  await db.collection(COLLECTION).doc(contactId).update(update);
 }
 
 export async function updateHumanMode(contactId, humanMode) {
@@ -101,12 +114,36 @@ export async function setUrgentFlag(contactId, urgent) {
 
 export async function dispatchConversation(contactId, patch) {
   const db = getDb();
+  const docRef = db.collection(COLLECTION).doc(contactId);
+
+  // Read current state to detect transitions (needed for escalatedAt / resolvedAt)
+  const docSnap = await docRef.get();
+  const current = docSnap.exists ? docSnap.data() : {};
+
   const update = { updatedAt: new Date() };
-  if (patch.status !== undefined) update.status = patch.status;
-  if (patch.humanMode !== undefined) update.humanMode = !!patch.humanMode;
+
+  if (patch.status !== undefined) {
+    update.status = patch.status;
+    if ((patch.status === 'resolved' || patch.status === 'bot_archived') && !current.resolvedAt) {
+      update.resolvedAt = new Date();
+      update.waitingSince = null;
+    }
+  }
+  if (patch.humanMode !== undefined) {
+    update.humanMode = !!patch.humanMode;
+    if (patch.humanMode === true && !current.humanMode) {
+      // Conversation transitioning to human-handled — record escalation time
+      update.escalatedAt = new Date();
+      update.firstAgentResponseAt = null; // reset for this escalation cycle
+    }
+    if (patch.humanMode === false) {
+      update.waitingSince = null;
+    }
+  }
   if (patch.assignedTo !== undefined) update.assignedTo = patch.assignedTo ?? null;
   if (patch.urgent !== undefined) update.urgent = !!patch.urgent;
-  await db.collection(COLLECTION).doc(contactId).update(update);
+
+  await docRef.update(update);
 }
 
 export async function addLabelToConversation(contactId, label) {
@@ -192,6 +229,9 @@ export async function listConversations(filters = {}) {
       lastMessageAt: lastMsg?.timestamp ?? data.updatedAt,
       lastClientMessageAt: data.lastClientMessageAt ?? null,
       consecutiveClientMessages: data.consecutiveClientMessages ?? 0,
+      waitingSince: data.waitingSince ?? null,
+      escalatedAt: data.escalatedAt ?? null,
+      firstAgentResponseAt: data.firstAgentResponseAt ?? null,
       updatedAt: data.updatedAt,
       createdAt: data.createdAt,
     };

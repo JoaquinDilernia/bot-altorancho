@@ -16,13 +16,24 @@ const STATUS_META = {
 };
 
 const AGENT_COLORS = ['var(--color-primary)', '#8b5cf6', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444'];
+const DEPT_COLORS  = ['#0ea5e9', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#ec4899'];
 function agentColor(idx) { return AGENT_COLORS[idx % AGENT_COLORS.length]; }
+function deptColor(idx)  { return DEPT_COLORS[idx % DEPT_COLORS.length]; }
+
 const CHANNEL_META = {
   whatsapp:  { label: 'WhatsApp',  color: '#25d366' },
   instagram: { label: 'Instagram', color: '#e1306c' },
 };
 
 function pct(a, b) { return b > 0 ? Math.round((a / b) * 100) : 0; }
+
+function fmtMin(min) {
+  if (min === null || min === undefined) return '—';
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
 
 function barLabel(dateStr, period, idx, total) {
   const d = new Date(dateStr + 'T12:00:00');
@@ -76,7 +87,8 @@ export default function Stats() {
         <div className={styles.error}>{error}</div>
       ) : !data ? null : (
         <div className={styles.body}>
-          {/* KPIs */}
+
+          {/* KPI Row 1: volumen */}
           <div className={styles.kpiRow}>
             <KpiCard title="Conversaciones" value={data.total} />
             <KpiCard
@@ -85,14 +97,39 @@ export default function Stats() {
               accent="var(--color-status-resolved)"
             />
             <KpiCard
-              title="Tasa bot" value={`${data.botResolutionRate}%`}
-              sub="gestionadas sin humano"
+              title="Bot autónomo" value={`${data.botResolutionRate}%`}
+              sub="sin intervención humana"
               accent="var(--color-primary)"
             />
             <KpiCard
               title="Pendientes" value={data.pending}
               sub="activas sin resolver"
               accent={data.pending > 0 ? 'var(--color-status-urgent)' : undefined}
+            />
+          </div>
+
+          {/* KPI Row 2: tiempos y SLA */}
+          <div className={styles.kpiRow3}>
+            <KpiCard
+              title="Tasa de escalación" value={`${data.escalationRate}%`}
+              sub={`${data.escalatedCount} derivadas a humano`}
+              accent={data.escalationRate > 40 ? 'var(--color-status-urgent)' : '#8b5cf6'}
+            />
+            <KpiCard
+              title="1ª respuesta (prom.)" value={fmtMin(data.avgFirstResponseMin)}
+              sub="desde escalación hasta respuesta del agente"
+              accent={
+                data.avgFirstResponseMin === null ? undefined :
+                data.avgFirstResponseMin > 30 ? 'var(--color-status-urgent)' :
+                data.avgFirstResponseMin > 10 ? '#f59e0b' :
+                'var(--color-status-resolved)'
+              }
+              hint={data.avgFirstResponseMin === null ? 'Sin datos suficientes' : undefined}
+            />
+            <KpiCard
+              title="Resolución (prom.)" value={fmtMin(data.avgResolutionMin)}
+              sub="desde apertura hasta cierre"
+              hint={data.avgResolutionMin === null ? 'Sin datos suficientes' : undefined}
             />
           </div>
 
@@ -143,8 +180,42 @@ export default function Stats() {
             </section>
           </div>
 
-          {/* By channel + labels */}
+          {/* By department + by channel */}
           <div className={styles.grid2}>
+            {data.byDepartment?.length > 0 ? (
+              <section className={styles.section}>
+                <h2 className={styles.sectionTitle}>Por departamento</h2>
+                <div className={styles.agentRows}>
+                  {data.byDepartment.map((d, idx) => {
+                    const color = deptColor(idx);
+                    return (
+                      <div key={d.id} className={styles.agentRow}>
+                        <div className={styles.agentLeft}>
+                          <span className={styles.dot} style={{ background: color }} />
+                          <div>
+                            <div className={styles.agentName}>{d.name}</div>
+                            <div className={styles.agentSub}>
+                              {d.handled} conv · {d.resolved} res.
+                              {d.avgFirstResponseMin !== null && ` · ⏱ ${fmtMin(d.avgFirstResponseMin)}`}
+                            </div>
+                          </div>
+                        </div>
+                        <div className={styles.hBarTrack}>
+                          <div className={styles.hBarFill} style={{ width: `${pct(d.handled, data.total)}%`, background: color }} />
+                        </div>
+                        <span className={styles.hBarNum}>{pct(d.handled, data.total)}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : (
+              <section className={styles.section}>
+                <h2 className={styles.sectionTitle}>Por departamento</h2>
+                <p className={styles.empty}>Sin derivaciones en el período</p>
+              </section>
+            )}
+
             <section className={styles.section}>
               <h2 className={styles.sectionTitle}>Por canal</h2>
               <HBars
@@ -156,34 +227,32 @@ export default function Stats() {
                 max={data.total}
               />
             </section>
-
-            {data.labelCounts.length > 0 ? (
-              <section className={styles.section}>
-                <h2 className={styles.sectionTitle}>Etiquetas más usadas</h2>
-                <HBars
-                  entries={data.labelCounts.map(l => ({ label: l.name, color: 'var(--color-primary)', value: l.count }))}
-                  max={data.labelCounts[0].count}
-                />
-              </section>
-            ) : (
-              <section className={styles.section}>
-                <h2 className={styles.sectionTitle}>Etiquetas</h2>
-                <p className={styles.empty}>Sin etiquetas en el período</p>
-              </section>
-            )}
           </div>
+
+          {/* Labels */}
+          {data.labelCounts.length > 0 && (
+            <section className={styles.section}>
+              <h2 className={styles.sectionTitle}>Etiquetas más usadas</h2>
+              <HBars
+                entries={data.labelCounts.map(l => ({ label: l.name, color: 'var(--color-primary)', value: l.count }))}
+                max={data.labelCounts[0].count}
+              />
+            </section>
+          )}
+
         </div>
       )}
     </div>
   );
 }
 
-function KpiCard({ title, value, sub, accent }) {
+function KpiCard({ title, value, sub, accent, hint }) {
   return (
     <div className={styles.kpiCard}>
       <span className={styles.kpiTitle}>{title}</span>
       <span className={styles.kpiValue} style={accent ? { color: accent } : undefined}>{value}</span>
       {sub && <span className={styles.kpiSub}>{sub}</span>}
+      {hint && <span className={styles.kpiHint}>{hint}</span>}
     </div>
   );
 }
