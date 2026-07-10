@@ -11,6 +11,69 @@ const client = axios.create({
   },
 });
 
+/**
+ * TiendaNube limita a 2 req/seg por tienda, con ráfagas de hasta 40 (leaky bucket).
+ * Con varios chats en simultáneo, una sola búsqueda de pedido ya dispara varias
+ * requests en paralelo, así que hay que throttlear TODO lo que sale hacia esta API
+ * para no comernos un 429 bajo tráfico alto. El tiempo de respuesta no es crítico
+ * acá (puede tardar), lo que importa es que la request eventualmente se resuelva.
+ */
+class TokenBucket {
+  constructor(ratePerSec, burst) {
+    this.ratePerSec = ratePerSec;
+    this.burst = burst;
+    this.tokens = burst;
+    this.lastRefill = Date.now();
+  }
+  _refill() {
+    const now = Date.now();
+    this.tokens = Math.min(this.burst, this.tokens + ((now - this.lastRefill) / 1000) * this.ratePerSec);
+    this.lastRefill = now;
+  }
+  async take() {
+    this._refill();
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      return;
+    }
+    const waitMs = ((1 - this.tokens) / this.ratePerSec) * 1000;
+    await new Promise(r => setTimeout(r, waitMs));
+    return this.take();
+  }
+}
+
+const rateLimiter = new TokenBucket(1.8, 30); // margen debajo del límite real (2/seg, ráfaga 40)
+const MAX_RETRIES = 6;
+
+client.interceptors.request.use(async config => {
+  await rateLimiter.take();
+  return config;
+});
+
+client.interceptors.response.use(
+  res => res,
+  async error => {
+    const config = error.config;
+    const status = error.response?.status;
+    const retryable = status === 429 || !error.response || status >= 500;
+    config.__retryCount = config?.__retryCount ?? 0;
+
+    if (!config || !retryable || config.__retryCount >= MAX_RETRIES) {
+      throw error;
+    }
+    config.__retryCount += 1;
+
+    const resetHeader = error.response?.headers?.['x-rate-limit-reset'];
+    const waitMs = status === 429 && resetHeader
+      ? Math.min(parseInt(resetHeader, 10) || 1000, 15000)
+      : Math.min(1000 * config.__retryCount, 10000);
+
+    console.warn(`[tiendanube] Retry ${config.__retryCount}/${MAX_RETRIES} tras ${status ?? error.message} en ${config.url} — esperando ${waitMs}ms`);
+    await new Promise(r => setTimeout(r, waitMs));
+    return client(config);
+  }
+);
+
 const ORDER_FIELDS = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,note,created_at';
 
 const TN_PAGE_SIZE = 200; // máximo que permite TiendaNube
