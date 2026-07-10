@@ -165,8 +165,9 @@ function MessageBubble({ msg, onRetry }) {
 
 function ConvItem({ conv, active, onClick, labelMap, nameMap = {} }) {
   const isUrgent = conv.urgent;
-  const isInsistent = (conv.consecutiveClientMessages ?? 0) >= 3;
-  const isWaiting = (conv.consecutiveClientMessages ?? 0) > 0 && conv.lastClientMessageAt;
+  const pendingMsgs = conv.consecutiveClientMessages ?? 0;
+  const isInsistent = pendingMsgs >= 3;
+  const isWaiting = pendingMsgs > 0 && conv.lastClientMessageAt;
   const waitMs = getSlaWaitMs(conv);
   const slaBadgeColor = slaColor(waitMs);
 
@@ -187,7 +188,12 @@ function ConvItem({ conv, active, onClick, labelMap, nameMap = {} }) {
                 title="Tiempo esperando respuesta de agente"
                 style={slaBadgeColor ? { background: slaBadgeColor + '22', color: slaBadgeColor, borderColor: slaBadgeColor + '66' } : undefined}
               >
-                ⏳{formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
+                ⏳ {formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
+              </span>
+            )}
+            {pendingMsgs > 0 && (
+              <span className={styles.pendingMsgsBadge} title={`${pendingMsgs} mensaje${pendingMsgs > 1 ? 's' : ''} sin respuesta`}>
+                {pendingMsgs} msg{pendingMsgs > 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -665,7 +671,7 @@ export default function Conversations() {
     } else if (filter === 'waiting') {
       if (isConvArchived) return false;
       if (!convHuman) return false;
-      if (getSlaWaitMs(c) < 10 * 60 * 1000) return false;
+      if (getSlaWaitMs(c) < 60 * 60 * 1000) return false;
     } else if (filter === 'teams') {
       if (isConvArchived) return false;
       if (!convHuman) return false;

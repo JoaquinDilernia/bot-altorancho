@@ -1361,6 +1361,19 @@
   flex-shrink: 0;
 }
 
+/* ==================== PENDING MSGS BADGE ==================== */
+.pendingMsgsBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: #6366f1;
+  background: #6366f110;
+  border: 1px solid #6366f133;
+  border-radius: 4px;
+  padding: 0 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* ==================== MESSAGE DELIVERY STATUS ==================== */
 .msgStatus {
   font-size: 10px;
