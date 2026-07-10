@@ -11,7 +11,7 @@ import {
   setUrgentFlag,
   addLabelToConversation,
 } from './conversation.service.js';
-import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts } from './tiendanube.service.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64 } from './meta.service.js';
 import {
