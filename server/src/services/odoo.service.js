@@ -231,12 +231,12 @@ export function formatStockInfo(productName, sku, stockResult) {
     return                                  `- ${store}: Disponible`;
   }).join('\n');
 
-  const webNote = 'El cliente también puede consultar el stock actualizado directamente en la página del producto en el sitio web de Alto Rancho.';
-
   if (isDisplayOnly) {
+    const webNote = 'Este es un producto de exhibición: no se vende online ni se puede llevar del local. El cliente puede visitar el local para verlo en persona. También puede consultar la página del producto en el sitio web para saber si está exhibido antes de ir.';
     return `Producto: ${productName} (SKU: ${sku}) — Producto de exhibición\nDisponibilidad para ver en local:\n${lines}\n${webNote}`;
   }
 
+  const webNote = 'El cliente también puede consultar el stock actualizado directamente en la página del producto en el sitio web de Alto Rancho.';
   return `Producto: ${productName} (SKU: ${sku})\nDisponibilidad en sucursales:\n${lines}\n${webNote}`;
 }
 
