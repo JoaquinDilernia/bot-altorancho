@@ -210,7 +210,7 @@ export default function Simulator() {
               >
                 {m.role !== 'user' && (
                   <span className={styles.bubbleLabel}>
-                    {m.role === 'admin' ? 'Agente' : 'Gina'}
+                    {m.role === 'admin' ? 'Agente' : 'Alto'}
                   </span>
                 )}
                 <div className={styles.bubbleText}>{m.content}</div>
@@ -219,7 +219,7 @@ export default function Simulator() {
             ))}
             {sending && (
               <div className={`${styles.bubble} ${styles.bubbleBot}`}>
-                <span className={styles.bubbleLabel}>Gina</span>
+                <span className={styles.bubbleLabel}>Alto</span>
                 <div className={styles.typing}>
                   <span /><span /><span />
                 </div>

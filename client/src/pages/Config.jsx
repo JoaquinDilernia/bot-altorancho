@@ -60,7 +60,7 @@ export default function Config() {
       <header className={styles.header}>
         <div>
           <h1 className={styles.title}>Configuración</h1>
-          <p className={styles.subtitle}>Personalizá el comportamiento de Gina</p>
+          <p className={styles.subtitle}>Personalizá el comportamiento de Alto</p>
         </div>
       </header>
 

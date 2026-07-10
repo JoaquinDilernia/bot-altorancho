@@ -157,7 +157,7 @@ export default function KnowledgeBase() {
       ) : items.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.emptyTitle}>Sin contenido aún</p>
-          <p className={styles.emptyText}>Agregá información para que Gina pueda responder mejor.</p>
+          <p className={styles.emptyText}>Agregá información para que Alto pueda responder mejor.</p>
         </div>
       ) : (
         <div className={styles.grid}>

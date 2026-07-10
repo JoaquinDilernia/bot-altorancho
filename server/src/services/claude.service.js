@@ -88,7 +88,7 @@ export async function generateConversationSummary(messages) {
   if (!messages?.length) return 'Sin mensajes para resumir.';
   const formatted = messages
     .map(m => {
-      const who = m.role === 'user' ? 'Cliente' : m.role === 'admin' ? 'Agente' : 'Gina (bot)';
+      const who = m.role === 'user' ? 'Cliente' : m.role === 'admin' ? 'Agente' : 'Alto (bot)';
       return `${who}: ${m.content ?? ''}`;
     })
     .join('\n');

@@ -156,7 +156,7 @@ function MessageBubble({ msg, onRetry }) {
         )}
       </div>
       <span className={styles.msgMeta}>
-        {isUser ? 'Cliente' : isAdmin ? 'Agente' : 'Gina'}
+        {isUser ? 'Cliente' : isAdmin ? 'Agente' : 'Alto'}
         {msg.timestamp ? ` · ${formatTime(msg.timestamp)}` : ''}
         {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} />}
       </span>
@@ -1135,7 +1135,7 @@ export default function Conversations() {
               /* ---- Bot is handling the conversation ---- */
               <div className={styles.botFooter}>
                 <span className={styles.botFooterDot} />
-                <span className={styles.botFooterText}>Gina está respondiendo automáticamente</span>
+                <span className={styles.botFooterText}>Alto está respondiendo automáticamente</span>
                 <button
                   className={styles.takeOverBtn}
                   onClick={() => dispatch('take_over', { agentId: myId })}
