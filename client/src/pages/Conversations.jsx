@@ -24,7 +24,7 @@ const FILTERS = [
   { value: 'bot',      label: 'Bot' },
   { value: 'mine',     label: 'Mis casos' },
   { value: 'urgent',   label: 'Urgentes' },
-  { value: 'sla',      label: 'SLA ⚠' },
+  { value: 'waiting',  label: 'Esperando ⏳' },
   { value: 'archived', label: 'Archivos' },
   { value: 'teams',    label: 'Equipos',  minRole: 'atencion_cliente' },
 ];
@@ -249,6 +249,7 @@ export default function Conversations() {
   const [summary, setSummary] = useState(null);
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [departments, setDepartments] = useState([]);
+  const [agentsList, setAgentsList] = useState([]);
   const [nameMap, setNameMap] = useState({});
   const [teamsDeptFilter, setTeamsDeptFilter] = useState('');
   const [apiWindowError, setApiWindowError] = useState(false);
@@ -282,6 +283,7 @@ export default function Conversations() {
     ]).then(([deptsData, agents]) => {
       const depts = deptsData.departments ?? [];
       setDepartments(depts);
+      setAgentsList(agents.filter(a => a.role !== 'admin'));
       const map = {};
       for (const d of depts) map[d.id] = d.name;
       for (const a of agents) { map[a.email] = a.name; map[a.id] = a.name; }
@@ -660,10 +662,9 @@ export default function Conversations() {
     } else if (filter === 'urgent') {
       if (isConvArchived) return false;
       if (!convUrgent) return false;
-    } else if (filter === 'sla') {
+    } else if (filter === 'waiting') {
       if (isConvArchived) return false;
       if (!convHuman) return false;
-      // Only show if client has been waiting >= 10 min
       if (getSlaWaitMs(c) < 10 * 60 * 1000) return false;
     } else if (filter === 'teams') {
       if (isConvArchived) return false;
@@ -684,8 +685,7 @@ export default function Conversations() {
     return true;
   });
 
-  // SLA view: sort by waiting time descending (longest wait first)
-  if (filter === 'sla') {
+  if (filter === 'waiting') {
     filtered.sort((a, b) => getSlaWaitMs(b) - getSlaWaitMs(a));
   }
 
@@ -843,6 +843,21 @@ export default function Conversations() {
                         → {dept.name}
                       </button>
                     ))}
+
+                    {agentsList.length > 0 && (
+                      <select
+                        className={styles.agentSelect}
+                        value=""
+                        onChange={e => { if (e.target.value) dispatch('assign_dept', { deptId: e.target.value }); }}
+                        disabled={updating}
+                        title="Derivar a agente específico"
+                      >
+                        <option value="">→ Agente...</option>
+                        {agentsList.map(a => (
+                          <option key={a.id} value={a.email}>{a.name}</option>
+                        ))}
+                      </select>
+                    )}
 
                     {/* Urgent toggle: always visible, toggles the flag */}
                     {isUrgentFlag ? (

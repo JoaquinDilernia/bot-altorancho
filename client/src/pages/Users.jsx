@@ -180,22 +180,24 @@ export default function Users() {
               </div>
             </div>
 
-            {form.data.role === 'operador' && (
-              <div className={styles.field}>
-                <label className={styles.label}>Departamento asignado</label>
-                <select
-                  className={styles.input}
-                  value={form.data.department}
-                  onChange={e => setField('department', e.target.value)}
-                >
-                  <option value="">— Sin departamento —</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-                <p className={styles.hint}>El operador verá todas las conversaciones escaladas a este departamento.</p>
-              </div>
-            )}
+            <div className={styles.field}>
+              <label className={styles.label}>Departamento asignado</label>
+              <select
+                className={styles.input}
+                value={form.data.department}
+                onChange={e => setField('department', e.target.value)}
+              >
+                <option value="">— Sin departamento —</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+              <p className={styles.hint}>
+                {form.data.role === 'operador'
+                  ? 'El operador verá solo las conversaciones escaladas a este departamento.'
+                  : '"Mis casos" mostrará las conversaciones asignadas a este departamento.'}
+              </p>
+            </div>
 
             <div className={styles.formActions}>
               <button type="button" className={styles.btnSecondary} onClick={cancel}>Cancelar</button>
@@ -232,7 +234,7 @@ export default function Users() {
                   <span className={`${styles.roleBadge} ${ROLE_COLOR[user.role] ?? ''}`}>
                     {ROLE_LABEL[user.role] ?? user.role}
                   </span>
-                  {user.role === 'operador' && user.department && (
+                  {user.department && (
                     <span className={styles.deptTag}>{deptName(user.department)}</span>
                   )}
                 </div>

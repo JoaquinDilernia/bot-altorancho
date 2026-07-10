@@ -1195,6 +1195,17 @@
   border-color: var(--color-primary-light);
 }
 .dispatchBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.agentSelect {
+  height: 26px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+.agentSelect:disabled { opacity: 0.5; cursor: not-allowed; }
 .dispatchBtnActive {
   background: var(--color-primary-subtle);
   color: var(--color-primary-dark);

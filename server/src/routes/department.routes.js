@@ -8,7 +8,7 @@ const router = Router();
 
 router.get('/', async (req, res) => {
   try {
-    res.json(await getAllDepartments());
+    res.json({ departments: await getAllDepartments() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

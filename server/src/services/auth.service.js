@@ -24,7 +24,6 @@ function toPublic(data) {
 
 const ADMIN_SEEDS = [
   { email: 'joaquin.dilernia@altorancho.com', name: 'Joaquín Di Lernia', password: 'altolett123' },
-  { email: 'jdilernia99@gmail.com',           name: 'Joaquín Di Lernia', password: 'altolett123' },
 ];
 
 export async function seedAgentsIfNeeded() {
@@ -38,13 +37,20 @@ export async function seedAgentsIfNeeded() {
         email: admin.email,
         name: admin.name,
         role: 'admin',
+        department: 'admin',
         passwordHash: hashPassword(admin.password),
         createdAt: new Date(),
       });
       console.log('[auth] Admin seedeado:', admin.email);
-    } else if (doc.data().role !== 'admin') {
-      await db.collection(COLLECTION).doc(id).update({ role: 'admin' });
-      console.log('[auth] Admin migrado a role: admin:', admin.email);
+    } else {
+      const data = doc.data();
+      const updates = {};
+      if (data.role !== 'admin') updates.role = 'admin';
+      if (!data.department) updates.department = 'admin';
+      if (Object.keys(updates).length > 0) {
+        await db.collection(COLLECTION).doc(id).update(updates);
+        console.log('[auth] Admin actualizado:', admin.email, updates);
+      }
     }
   }
 }
@@ -117,7 +123,7 @@ export async function updateProfile(agentId, { name, password } = {}) {
 
 export function generateToken(agent) {
   return jwt.sign(
-    { id: agent.id, email: agent.email, name: agent.name, role: agent.role },
+    { id: agent.id, email: agent.email, name: agent.name, role: agent.role, department: agent.department ?? null },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );

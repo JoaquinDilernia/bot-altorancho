@@ -19,7 +19,7 @@ export default function Departments() {
     setLoading(true);
     try {
       const r = await authFetch(BASE_URL + '/api/departments');
-      if (r.ok) setDepartments(await r.json());
+      if (r.ok) setDepartments((await r.json()).departments ?? []);
     } finally {
       setLoading(false);
     }
