@@ -832,18 +832,6 @@ export default function Conversations() {
                       </button>
                     )}
 
-                    {departments.map(dept => (
-                      <button
-                        key={dept.id}
-                        className={`${styles.dispatchBtn} ${selected.assignedTo === dept.id && isHuman ? styles.dispatchBtnActive : ''}`}
-                        onClick={() => dispatch('assign_dept', { deptId: dept.id })}
-                        disabled={updating}
-                        title={`Derivar a ${dept.name}`}
-                      >
-                        → {dept.name}
-                      </button>
-                    ))}
-
                     {agentsList.length > 0 && (
                       <select
                         className={styles.agentSelect}
