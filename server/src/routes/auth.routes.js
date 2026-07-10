@@ -3,7 +3,7 @@ import {
   validateCredentials, generateToken, updateProfile,
   createUser, listUsers, deleteUser, updateUser,
 } from '../services/auth.service.js';
-import { requireAuth, requireAdmin } from '../middleware/requireAuth.js';
+import { requireAuth, requireAdmin, requireAtLeastAtencionCliente } from '../middleware/requireAuth.js';
 
 const router = Router();
 
@@ -41,8 +41,8 @@ router.put('/profile', requireAuth, async (req, res) => {
   }
 });
 
-// Gestión de usuarios (solo admin)
-router.get('/users', requireAuth, requireAdmin, async (req, res) => {
+// Listado de usuarios: atencion_cliente y admin (para resolución de nombres y dispatch)
+router.get('/users', requireAuth, requireAtLeastAtencionCliente, async (req, res) => {
   try {
     res.json(await listUsers());
   } catch (err) {
