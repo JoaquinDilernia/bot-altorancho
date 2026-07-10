@@ -24,6 +24,7 @@ import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { seedDepartmentsIfNeeded } from './services/department.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
 import { closeInactiveConversations } from './services/inactivity.service.js';
+import { sendEscalationFollowups } from './services/escalation.service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -36,6 +37,11 @@ seedDepartmentsIfNeeded().catch(err => console.error('[seed] Error seeding depar
 // Inactivity cron: runs every hour, closes bot-handled conversations idle >24h
 cron.schedule('0 * * * *', () => {
   closeInactiveConversations().catch(err => console.error('[cron] inactivity error:', err));
+});
+
+// Escalation followup: every 30min, sends a reminder to clients waiting >2hs without agent response
+cron.schedule('*/30 * * * *', () => {
+  sendEscalationFollowups().catch(err => console.error('[cron] escalation followup error:', err));
 });
 
 // Middleware

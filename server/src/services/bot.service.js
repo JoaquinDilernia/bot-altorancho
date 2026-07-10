@@ -61,6 +61,35 @@ const URGENCY_KEYWORDS = [
 
 const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
 
+// Returns true if current Argentina time is within business hours
+export function isWithinBusinessHours(botConfig = {}) {
+  const tz = 'America/Argentina/Buenos_Aires';
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: tz }));
+  const day = now.getDay(); // 0=Sun, 1=Mon ... 6=Sat
+  const hour = now.getHours();
+  const minute = now.getMinutes();
+  const timeMin = hour * 60 + minute;
+
+  const startH = botConfig.businessHoursStart ?? 9;
+  const endH   = botConfig.businessHoursEnd   ?? 18;
+  const days   = botConfig.businessDays        ?? [1, 2, 3, 4, 5]; // lun-vie
+
+  return days.includes(day) && timeMin >= startH * 60 && timeMin < endH * 60;
+}
+
+function buildEscalationMessage(deptName, botConfig = {}) {
+  const within = isWithinBusinessHours(botConfig);
+  const startH = botConfig.businessHoursStart ?? 9;
+  const endH   = botConfig.businessHoursEnd   ?? 18;
+  const hoursStr = `${startH}:00 a ${endH}:00hs, lunes a viernes`;
+
+  if (within) {
+    return `Tu consulta fue derivada a *${deptName}* 👋\n\nUn agente va a atenderte en breve. Por favor aguardá unos minutos.\n\n🕐 Horario de atención: ${hoursStr}.`;
+  } else {
+    return `Tu consulta fue derivada a *${deptName}* 👋\n\nEn este momento estamos fuera del horario de atención (${hoursStr}). Tu mensaje fue registrado y un agente te va a responder cuando retomemos.\n\n¡Gracias por tu paciencia!`;
+  }
+}
+
 function parseEscalationMarker(text, departments = []) {
   // Build dynamic markers from active departments
   const markers = departments.map(d => ({
@@ -109,7 +138,7 @@ export async function processIncomingMessage(msg) {
       getOrCreateCustomer(from, channel, contactName),
       getAllLabels().catch(() => []),
       getDb().collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
-      getActiveDepartments().catch(() => []),
+      getActiveDepartments().then(d => d.filter(dep => dep.id !== 'admin')).catch(() => []),
     ]);
   } catch (err) {
     console.error('[bot] Error cargando contexto para', from, err.message);
@@ -221,7 +250,7 @@ export async function processIncomingMessage(msg) {
     : false;
 
   const [orderContext, stockInfo] = await Promise.all([
-    resolveOrderContext(text ?? '', customer),
+    resolveOrderContext(text ?? '', customer, conversation),
     resolveStockContext(text ?? ''),
   ]);
   const customerContext = buildCustomerContext(customer);
@@ -230,6 +259,12 @@ export async function processIncomingMessage(msg) {
     linkCustomerFromOrder(from, orderContext.tnCustomer).catch(err =>
       console.error('[bot] linkCustomer error:', err.message)
     );
+  }
+
+  if (orderContext.orderRef) {
+    getDb().collection('bot-altorancho_conversations').doc(from)
+      .update({ lastOrderRef: orderContext.orderRef })
+      .catch(() => {});
   }
 
   console.log(`[bot] Llamando a Claude para ${from}`);
@@ -268,6 +303,19 @@ export async function processIncomingMessage(msg) {
       assignedTo: assignTo ?? null,
     });
     console.log(`[bot] Escalando ${from} → agente: ${assignTo ?? 'sin asignar'}`);
+
+    // Mensaje automático al cliente informando la derivación
+    const deptName = departments.find(d => d.id === assignTo)?.name ?? 'Atención al cliente';
+    const escalationMsg = buildEscalationMessage(deptName, botConfig);
+    if (escalationMsg) {
+      try {
+        await appendMessage(from, { role: 'assistant', content: escalationMsg });
+        if (channel === 'whatsapp') await sendWhatsAppMessage(from, escalationMsg);
+        else if (channel === 'instagram') await sendInstagramMessage(from, escalationMsg);
+      } catch (err) {
+        console.error('[bot] Error enviando mensaje de escalación:', err.message);
+      }
+    }
   } else if (shouldClose) {
     await updateConversationStatus(from, 'resolved');
     console.log(`[bot] Conversación ${from} resuelta por el bot`);
@@ -327,7 +375,7 @@ async function resolveStockContext(text) {
   }
 }
 
-async function resolveOrderContext(text, customer) {
+async function resolveOrderContext(text, customer, conversation = {}) {
   const trimmed = text.trim();
 
   if (trimmed.includes('@')) {
@@ -352,14 +400,17 @@ async function resolveOrderContext(text, customer) {
       const orderRef = match[1] ?? null;
 
       if (orderRef) {
-        return await searchOrderByRef(orderRef);
+        const result = await searchOrderByRef(orderRef);
+        return { ...result, orderRef };
       }
 
-      // Sin número → usar última orden guardada del perfil del cliente
-      const lastNumber = customer?.tnOrders?.[0]?.number;
-      if (lastNumber) {
-        console.log(`[bot] Sin número en mensaje, usando orden guardada del cliente: #${lastNumber}`);
-        return await searchOrderByRef(String(lastNumber));
+      // Sin número → priorizar la última orden mencionada en esta conversación,
+      // luego la del perfil del cliente
+      const fallbackRef = conversation.lastOrderRef ?? String(customer?.tnOrders?.[0]?.number ?? '');
+      if (fallbackRef) {
+        console.log(`[bot] Sin número en mensaje, usando orden del contexto: #${fallbackRef}`);
+        const result = await searchOrderByRef(fallbackRef);
+        return { ...result, orderRef: fallbackRef };
       }
 
       return { orderInfo: null, tnCustomer: null };

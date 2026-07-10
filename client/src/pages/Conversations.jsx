@@ -163,7 +163,7 @@ function MessageBubble({ msg, onRetry }) {
   );
 }
 
-function ConvItem({ conv, active, onClick, labelMap }) {
+function ConvItem({ conv, active, onClick, labelMap, nameMap = {} }) {
   const isUrgent = conv.urgent;
   const isInsistent = (conv.consecutiveClientMessages ?? 0) >= 3;
   const isWaiting = (conv.consecutiveClientMessages ?? 0) > 0 && conv.lastClientMessageAt;
@@ -655,7 +655,8 @@ export default function Conversations() {
       if (status !== 'bot') return false;
     } else if (filter === 'mine') {
       if (isConvArchived) return false;
-      if (!convHuman || c.assignedTo !== myId) return false;
+      const myDept = agent?.department;
+      if (!convHuman || (c.assignedTo !== myId && (!myDept || c.assignedTo !== myDept))) return false;
     } else if (filter === 'urgent') {
       if (isConvArchived) return false;
       if (!convUrgent) return false;
@@ -759,6 +760,7 @@ export default function Conversations() {
                 active={selected?.id === c.id}
                 onClick={() => setSelected(c)}
                 labelMap={labelMap}
+                nameMap={nameMap}
               />
             ))
           )}
@@ -1029,7 +1031,7 @@ export default function Conversations() {
               /* ---- Normal agent reply form ---- */
               <form className={styles.replyForm} onSubmit={sendReply}>
                 <div className={styles.replyHumanBadge}>
-                  Modo agente — Gina no responde · Respondiendo como <strong>{AGENTS.find(a => a.id === myId)?.label ?? myId}</strong>
+                  Modo agente — Bot no responde · Respondiendo como <strong>{nameMap[myId] ?? myId}</strong>
                 </div>
                 {windowApproaching && (
                   <div className={styles.windowWarning}>
