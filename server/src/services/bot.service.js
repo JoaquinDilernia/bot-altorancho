@@ -36,6 +36,10 @@ const ORDER_PATTERNS = [
   /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
   /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
   /cuándo\s*(llega|llega)/i,
+  // Compra mencionada sin número (frecuente en compras de local físico,
+  // que el cliente no suele identificar con un número de pedido)
+  /mi\s+compra\b/i,
+  /compr[eé]\s+(?:algo|un|una|el|la)\b/i,
 ];
 
 const STOCK_PATTERNS = [
@@ -109,16 +113,19 @@ function parseEscalationMarker(text, departments = []) {
 }
 
 function parseCloseMarker(text) {
-  if (text.startsWith('[CERRAR]')) {
-    return { shouldClose: true, cleanText: text.replace(/^\[CERRAR\]\s*/, '') };
+  // Busca [CERRAR] en cualquier posición (no solo al principio) y sin
+  // importar mayúsculas/minúsculas — si el modelo no lo pone exactamente
+  // al inicio, antes quedaba como texto literal visible para el cliente.
+  if (/\[CERRAR\]/i.test(text)) {
+    return { shouldClose: true, cleanText: text.replace(/\[CERRAR\]\s*/i, '').trim() };
   }
   return { shouldClose: false, cleanText: text };
 }
 
 function parseLabelMarkers(text) {
-  const labels = [...text.matchAll(/\[LABEL:([^\]]+)\]/g)].map(m => m[1].trim());
-  const newLabels = [...text.matchAll(/\[NEW_LABEL:([^\]]+)\]/g)].map(m => m[1].trim());
-  const cleanText = text.replace(/\[(NEW_)?LABEL:[^\]]+\]/g, '').trim();
+  const labels = [...text.matchAll(/\[LABEL:([^\]]+)\]/gi)].map(m => m[1].trim());
+  const newLabels = [...text.matchAll(/\[NEW_LABEL:([^\]]+)\]/gi)].map(m => m[1].trim());
+  const cleanText = text.replace(/\[(NEW_)?LABEL:[^\]]+\]/gi, '').trim();
   return { labels, newLabels, cleanText };
 }
 
@@ -250,7 +257,7 @@ export async function processIncomingMessage(msg) {
     : false;
 
   const [orderContext, stockInfo] = await Promise.all([
-    resolveOrderContext(text ?? '', customer, conversation),
+    resolveOrderContext(text ?? '', customer, conversation, from),
     resolveStockContext(text ?? ''),
   ]);
   const customerContext = buildCustomerContext(customer);
@@ -268,17 +275,28 @@ export async function processIncomingMessage(msg) {
   }
 
   console.log(`[bot] Llamando a Claude para ${from}`);
-  const botReply = await generateBotResponse(text ?? '', history, {
-    knowledgeBase,
-    orderInfo: orderContext.orderInfo,
-    stockInfo,
-    customerContext,
-    availableLabels: availableLabels.map(l => l.name),
-    botConfig,
-    imageData,
-    departments,
-    isReopened: isRecent && history.length > 0,
-  });
+  let botReply;
+  try {
+    botReply = await generateBotResponse(text ?? '', history, {
+      knowledgeBase,
+      orderInfo: orderContext.orderInfo,
+      stockInfo,
+      customerContext,
+      availableLabels: availableLabels.map(l => l.name),
+      botConfig,
+      imageData,
+      departments,
+      isReopened: isRecent && history.length > 0,
+    });
+  } catch (err) {
+    console.error(`[bot] Claude falló definitivamente para ${from} tras reintentos:`, err.message);
+    const fallbackMsg = 'Estamos con un poquito de demora en este momento, ¡ya te contestamos! 🙏';
+    await appendMessage(from, { role: 'assistant', content: fallbackMsg });
+    await setUrgentFlag(from, true).catch(() => {});
+    if (channel === 'whatsapp') await sendWhatsAppMessage(from, fallbackMsg).catch(() => {});
+    else if (channel === 'instagram') await sendInstagramMessage(from, fallbackMsg).catch(() => {});
+    return;
+  }
   console.log(`[bot] Claude respondió (${botReply.length} chars) para ${from}`);
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
@@ -375,7 +393,7 @@ async function resolveStockContext(text) {
   }
 }
 
-async function resolveOrderContext(text, customer, conversation = {}) {
+async function resolveOrderContext(text, customer, conversation = {}, from = null) {
   const trimmed = text.trim();
 
   if (trimmed.includes('@')) {
@@ -411,6 +429,18 @@ async function resolveOrderContext(text, customer, conversation = {}) {
         console.log(`[bot] Sin número en mensaje, usando orden del contexto: #${fallbackRef}`);
         const result = await searchOrderByRef(fallbackRef);
         return { ...result, orderRef: fallbackRef };
+      }
+
+      // Tampoco hay referencia previa: puede ser una compra de local físico,
+      // que no queda registrada en TiendaNube. Buscar en Odoo por el teléfono
+      // del cliente (ya lo tenemos, es el número de WhatsApp) antes de rendirse.
+      if (from) {
+        const odooOrders = await findOdooOrdersByContact(from);
+        if (odooOrders.length) {
+          console.log(`[bot] Pedido de local encontrado en Odoo por teléfono para ${from}`);
+          const summary = odooOrders.map(o => formatOdooOrder(o)).filter(Boolean);
+          return { orderInfo: summary, tnCustomer: null };
+        }
       }
 
       return { orderInfo: null, tnCustomer: null };

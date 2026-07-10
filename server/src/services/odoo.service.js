@@ -14,26 +14,43 @@ async function getUid() {
       service: 'common', method: 'authenticate',
       args: [ODOO_DB, process.env.ODOO_USER, process.env.ODOO_API_KEY, {}],
     },
-  });
+  }, { timeout: 15000 });
   if (!data.result) throw new Error('[odoo] Auth failed');
   cachedUid = data.result;
   return cachedUid;
 }
 
-async function callOdoo(model, method, args = [], kwargs = {}) {
-  const uid = await getUid();
-  const { data } = await axios.post(`${ODOO_URL}/jsonrpc`, {
-    jsonrpc: '2.0', method: 'call',
-    params: {
-      service: 'object', method: 'execute_kw',
-      args: [ODOO_DB, uid, process.env.ODOO_API_KEY, model, method, args, kwargs],
-    },
-  });
-  if (data.error) {
-    cachedUid = null; // reset uid on error
-    throw new Error(data.error.data?.message ?? 'Odoo RPC error');
+const ODOO_MAX_RETRIES = 4;
+
+/**
+ * Reintenta la llamada RPC ante fallos transitorios (red, timeout) o sesión
+ * expirada. Resetea cachedUid antes de reintentar para forzar re-autenticación
+ * — sin esto, un token vencido hacía que la búsqueda devolviera "no encontrado"
+ * en vez de reintentar con una sesión válida.
+ */
+async function callOdoo(model, method, args = [], kwargs = {}, attempt = 1) {
+  try {
+    const uid = await getUid();
+    const { data } = await axios.post(`${ODOO_URL}/jsonrpc`, {
+      jsonrpc: '2.0', method: 'call',
+      params: {
+        service: 'object', method: 'execute_kw',
+        args: [ODOO_DB, uid, process.env.ODOO_API_KEY, model, method, args, kwargs],
+      },
+    }, { timeout: 15000 });
+    if (data.error) {
+      cachedUid = null;
+      throw new Error(data.error.data?.message ?? 'Odoo RPC error');
+    }
+    return data.result;
+  } catch (err) {
+    if (attempt >= ODOO_MAX_RETRIES) throw err;
+    cachedUid = null;
+    const waitMs = Math.min(1000 * attempt, 5000);
+    console.warn(`[odoo] callOdoo (${model}.${method}) intento ${attempt}/${ODOO_MAX_RETRIES} falló: ${err.message} — reintentando en ${waitMs}ms`);
+    await new Promise(r => setTimeout(r, waitMs));
+    return callOdoo(model, method, args, kwargs, attempt + 1);
   }
-  return data.result;
 }
 
 const ORDER_FIELDS = ['name', 'state', 'partner_id', 'amount_total', 'date_order',
@@ -122,17 +139,23 @@ export async function findOdooOrder(query) {
 
 /**
  * Busca pedidos de un cliente por teléfono o email.
+ *
+ * El teléfono de WhatsApp viene en formato internacional (ej: 5491534438203),
+ * pero Odoo suele tener cargado el número en formato local sin código de país
+ * ni "9" de celular (ej: 1534438203) — son strings distintos y un ilike directo
+ * nunca matchea. Comparamos por los últimos 8 dígitos (el número de abonado,
+ * sin prefijos), que se preservan igual en ambos formatos.
  */
 export async function findOdooOrdersByContact(contact) {
   const isEmail = contact.includes('@');
   const field = isEmail ? 'email' : 'phone';
 
-  // Normalizar teléfono: quitar +, espacios
   const normalized = contact.replace(/[\s+\-()]/g, '');
+  const searchValue = isEmail ? contact : normalized.slice(-8);
 
   try {
     const partners = await callOdoo('res.partner', 'search_read',
-      [[[field, 'ilike', isEmail ? contact : normalized]]],
+      [[[field, 'ilike', searchValue]]],
       { fields: ['id', 'name'], limit: 5 });
 
     if (!partners?.length) return [];
@@ -151,14 +174,8 @@ export async function findOdooOrdersByContact(contact) {
 
 const STOCK_PROXY = 'lett.exemax.ar';
 
-/**
- * Consulta stock de un SKU contra el proxy de Odoo.
- * Usa https nativo porque GET con body no funciona con fetch.
- * @param {string} sku
- * @returns {Promise<Array<{warehouse:string, warehouse_id:number, qty:number}>>}
- */
-export async function getStockBySku(sku) {
-  return new Promise((resolve) => {
+function requestStockOnce(sku) {
+  return new Promise((resolve, reject) => {
     const body = JSON.stringify({});
     const path = `/odoo-api/get-product/${encodeURIComponent(sku)}`;
     const req = https.request({
@@ -178,19 +195,40 @@ export async function getStockBySku(sku) {
         try {
           const json = JSON.parse(data);
           resolve(Array.isArray(json.result) ? json.result : []);
-        } catch {
-          resolve([]);
+        } catch (e) {
+          reject(e);
         }
       });
     });
-    req.on('error', err => {
-      console.error('[odoo-stock] proxy error:', err.message);
-      resolve([]);
-    });
-    req.on('timeout', () => { req.destroy(); resolve([]); });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
     req.write(body);
     req.end();
   });
+}
+
+const STOCK_MAX_RETRIES = 3;
+
+/**
+ * Consulta stock de un SKU contra el proxy de Odoo.
+ * Usa https nativo porque GET con body no funciona con fetch.
+ * Reintenta ante fallos de red/timeout — es un GET sin efectos secundarios,
+ * así que reintentar es seguro. Antes, un fallo transitorio se traducía
+ * silenciosamente en "No disponible" en las 3 sucursales.
+ * @param {string} sku
+ * @returns {Promise<Array<{warehouse:string, warehouse_id:number, qty:number}>>}
+ */
+export async function getStockBySku(sku) {
+  for (let attempt = 1; attempt <= STOCK_MAX_RETRIES; attempt++) {
+    try {
+      return await requestStockOnce(sku);
+    } catch (err) {
+      console.warn(`[odoo-stock] SKU ${sku} intento ${attempt}/${STOCK_MAX_RETRIES} falló: ${err.message}`);
+      if (attempt === STOCK_MAX_RETRIES) return [];
+      await new Promise(r => setTimeout(r, Math.min(1000 * attempt, 4000)));
+    }
+  }
+  return [];
 }
 
 /**

@@ -51,7 +51,7 @@ Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando
 Usá [CERRAR] solo cuando estés seguro de que la conversación terminó.`;
 }
 
-function callAnthropicAPI(payload) {
+function callAnthropicAPIOnce(payload) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
     const req = https.request({
@@ -69,7 +69,10 @@ function callAnthropicAPI(payload) {
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         if (res.statusCode !== 200) {
-          return reject(new Error(`Anthropic API ${res.statusCode}: ${data}`));
+          const err = new Error(`Anthropic API ${res.statusCode}: ${data}`);
+          err.statusCode = res.statusCode;
+          err.retryAfter = res.headers['retry-after'];
+          return reject(err);
         }
         try {
           resolve(JSON.parse(data));
@@ -82,6 +85,31 @@ function callAnthropicAPI(payload) {
     req.write(body);
     req.end();
   });
+}
+
+const CLAUDE_MAX_RETRIES = 5;
+
+/**
+ * La API de Anthropic puede devolver 429 (rate limit) o 529 (overloaded)
+ * bajo tráfico alto. Sin reintento, esos errores dejaban al cliente sin
+ * ninguna respuesta. El tiempo no es crítico acá — lo que importa es que
+ * eventualmente se genere una respuesta.
+ */
+async function callAnthropicAPI(payload) {
+  let lastErr;
+  for (let attempt = 1; attempt <= CLAUDE_MAX_RETRIES; attempt++) {
+    try {
+      return await callAnthropicAPIOnce(payload);
+    } catch (err) {
+      lastErr = err;
+      const retryable = !err.statusCode || err.statusCode === 429 || err.statusCode === 529 || err.statusCode >= 500;
+      if (!retryable || attempt === CLAUDE_MAX_RETRIES) throw err;
+      const waitMs = err.retryAfter ? parseInt(err.retryAfter, 10) * 1000 : Math.min(1000 * 2 ** (attempt - 1), 15000);
+      console.warn(`[claude] Retry ${attempt}/${CLAUDE_MAX_RETRIES} tras error: ${err.message} — esperando ${waitMs}ms`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+  throw lastErr;
 }
 
 export async function generateConversationSummary(messages) {
@@ -142,7 +170,7 @@ Si el nombre del titular del pedido es distinto al nombre de la persona que te e
     prompt += `\n\nIMPORTANTE — USO DE LA INFORMACIÓN DE LA TIENDA: Es TU ÚNICA fuente de verdad para políticas, procesos, links y datos de la tienda. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente (ej: si dice que quiere hacer un cambio, pasale el link/proceso de cambios de esta sección sin que lo pida). Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.`;
   }
   if (customerContext) prompt += `\n\n--- PERFIL DEL CLIENTE ---\n${customerContext}`;
-  prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos. Si el cliente menciona un número y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si después de esa aclaración sigue sin encontrarse, pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local.`;
+  prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos. Si el cliente menciona una compra y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si fue de un LOCAL, las compras en local TAMBIÉN tienen número de comprobante/ticket (suele empezar con "S", ej: S08121) — pedile ese número y buscalo, exactamente igual que harías con un número de pedido web. (3) Si no tiene el número a mano o sigue sin encontrarse después de buscarlo, ahí sí pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local, y si es local pedí el número de comprobante antes de pedir el email.`;
   if (orderInfo) {
     prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
     prompt += `\n\nGuía para interpretar el pedido:

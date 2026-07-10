@@ -3,6 +3,32 @@ import crypto from 'crypto';
 
 const META_API_URL = 'https://graph.facebook.com/v20.0';
 
+const SEND_MAX_RETRIES = 3;
+// Solo reintentamos casos donde es seguro asumir que el mensaje NUNCA llegó
+// a Meta: la conexión ni se estableció (DNS/conexión rechazada), o Meta
+// respondió con un error propio (5xx) o rate-limit (429) — nunca en un
+// timeout ambiguo, para evitar mandar el mismo mensaje dos veces.
+const SAFE_RETRY_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']);
+const SAFE_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+async function postWithSafeRetry(url, data, config) {
+  let lastErr;
+  for (let attempt = 1; attempt <= SEND_MAX_RETRIES; attempt++) {
+    try {
+      return await axios.post(url, data, config);
+    } catch (err) {
+      lastErr = err;
+      const status = err.response?.status;
+      const retryable = SAFE_RETRY_STATUSES.has(status) || (!err.response && SAFE_RETRY_CODES.has(err.code));
+      if (!retryable || attempt === SEND_MAX_RETRIES) throw err;
+      const waitMs = Math.min(1000 * attempt, 4000);
+      console.warn(`[meta] Envío a ${url} intento ${attempt}/${SEND_MAX_RETRIES} falló (${status ?? err.code}) — reintentando en ${waitMs}ms`);
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+  }
+  throw lastErr;
+}
+
 export function verifyWebhookSignature(rawBody, signature) {
   if (!signature || !process.env.META_APP_SECRET) return false;
 
@@ -20,7 +46,7 @@ export async function sendWhatsAppMessage(to, text) {
     console.log('[meta] sendWhatsAppMessage skipped — tokens not configured');
     return null;
   }
-  const { data } = await axios.post(
+  const { data } = await postWithSafeRetry(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
     {
       messaging_product: 'whatsapp',
@@ -44,7 +70,7 @@ export async function sendInstagramMessage(recipientId, text) {
     console.log('[meta] sendInstagramMessage skipped — tokens not configured');
     return null;
   }
-  const { data } = await axios.post(
+  const { data } = await postWithSafeRetry(
     `${META_API_URL}/${process.env.META_IG_PAGE_ID}/messages`,
     {
       recipient: { id: recipientId },
