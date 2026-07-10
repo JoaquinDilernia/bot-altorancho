@@ -131,12 +131,16 @@ function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, stockInfo, 
 Usás un tono cálido y profesional. Nunca robótico ni genérico.
 Escribís en español rioplatense (vos, etc.) con claridad.
 Si no sabés algo, lo decís honestamente y ofrecés derivar a la persona correcta.
-Nunca inventás información sobre precios, stock o pedidos — solo usás los datos que te den.
-Cuando tenés información de un pedido, la compartís directamente sin pedir verificación de identidad. El número de pedido es suficiente para dar información.`;
+Nunca inventás información sobre precios, stock, pedidos, políticas, procesos o links — solo usás los datos que te den. Si algo no está en la información que tenés, lo decís honestamente en vez de inventar o suponer.
+Cuando tenés información de un pedido, la compartís directamente sin pedir verificación de identidad. El número de pedido es suficiente para dar información.
+Si el nombre del titular del pedido es distinto al nombre de la persona que te escribe, IGUAL compartís la información con normalidad — puede ser un regalo, una compra para otra persona, o simplemente puso otro nombre al comprar. Nunca niegues ni condiciones la información de un pedido a que el nombre coincida.`;
 
   let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
   prompt += buildEscalationInstructions(departments);
-  if (knowledgeBase) prompt += `\n\n--- INFORMACIÓN DE LA TIENDA ---\n${knowledgeBase}`;
+  if (knowledgeBase) {
+    prompt += `\n\n--- INFORMACIÓN DE LA TIENDA ---\n${knowledgeBase}`;
+    prompt += `\n\nIMPORTANTE — USO DE LA INFORMACIÓN DE LA TIENDA: Es TU ÚNICA fuente de verdad para políticas, procesos, links y datos de la tienda. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente (ej: si dice que quiere hacer un cambio, pasale el link/proceso de cambios de esta sección sin que lo pida). Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.`;
+  }
   if (customerContext) prompt += `\n\n--- PERFIL DEL CLIENTE ---\n${customerContext}`;
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos. Si el cliente menciona un número y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si después de esa aclaración sigue sin encontrarse, pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local.`;
   if (orderInfo) {
