@@ -23,6 +23,7 @@ const CHANNEL_CONFIG = {
 const FILTERS = [
   { value: 'bot',      label: 'Bot' },
   { value: 'mine',     label: 'Mis casos' },
+  { value: 'critical', label: '🔴 Crítico' },
   { value: 'urgent',   label: 'Urgentes' },
   { value: 'waiting',  label: 'Esperando ⏳' },
   { value: 'archived', label: 'Archivos' },
@@ -180,6 +181,7 @@ function ConvItem({ conv, active, onClick, labelMap, nameMap = {} }) {
         <span className={styles.itemName}>{conv.contactName || conv.contactId}</span>
         <div className={styles.itemTopRight}>
           <div className={styles.itemIndicators}>
+            {conv.critical && <span className={styles.criticalBadge} title="Crítico — 4+ mensajes sin respuesta">🔴</span>}
             {isUrgent && <span className={styles.urgentFlagBadge} title="Urgente">⚡</span>}
             {isInsistent && <span className={styles.insistentBadge} title="Cliente insistente — escribió varias veces sin respuesta">⚠</span>}
             {isWaiting && (
@@ -665,6 +667,9 @@ export default function Conversations() {
       if (isConvArchived) return false;
       const myDept = agent?.department;
       if (!convHuman || (c.assignedTo !== myId && (!myDept || c.assignedTo !== myDept))) return false;
+    } else if (filter === 'critical') {
+      if (isConvArchived) return false;
+      if (!c.critical) return false;
     } else if (filter === 'urgent') {
       if (isConvArchived) return false;
       if (!convUrgent) return false;

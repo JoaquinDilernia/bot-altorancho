@@ -49,14 +49,22 @@ export async function appendMessage(contactId, message) {
   const current = docData.messages ?? [];
   const updated = [...current, { ...message, timestamp: new Date() }].slice(-200);
 
+  const CRITICAL_THRESHOLD = 4;
+
   const extra = {};
   if (message.role === 'user') {
+    const nextConsecutive = (docData.consecutiveClientMessages ?? 0) + 1;
     extra.unread = admin.firestore.FieldValue.increment(1);
     extra.lastClientMessageAt = new Date();
-    extra.consecutiveClientMessages = admin.firestore.FieldValue.increment(1);
+    extra.consecutiveClientMessages = nextConsecutive;
     // SLA: start waiting timer when client writes to an agent-handled conversation
     if (docData.humanMode && !docData.waitingSince) {
       extra.waitingSince = new Date();
+    }
+    // Auto-critical: 4+ consecutive messages without agent response
+    if (nextConsecutive >= CRITICAL_THRESHOLD && !docData.critical) {
+      extra.critical = true;
+      console.log(`[conv] Conversación ${contactId} marcada como crítica (${nextConsecutive} msgs consecutivos)`);
     }
   } else {
     // Any non-user message (bot or agent) resets the consecutive counter
@@ -66,6 +74,10 @@ export async function appendMessage(contactId, message) {
     // Track first agent response after escalation (for response-time metrics)
     if (message.role === 'admin' && docData.humanMode && !docData.firstAgentResponseAt) {
       extra.firstAgentResponseAt = new Date();
+    }
+    // Clear critical flag when agent responds
+    if (message.role === 'admin' && docData.critical) {
+      extra.critical = false;
     }
   }
 
@@ -222,6 +234,7 @@ export async function listConversations(filters = {}) {
       humanMode: data.humanMode ?? false,
       assignedTo: data.assignedTo ?? null,
       urgent: isUrgent,
+      critical: data.critical === true,
       unread: data.unread ?? 0,
       labels: data.labels ?? [],
       messageCount: data.messages?.length ?? 0,
