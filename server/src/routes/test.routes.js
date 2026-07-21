@@ -6,10 +6,10 @@ import { getCustomerProfile } from '../services/customer.service.js';
 const router = Router();
 
 router.post('/message', async (req, res) => {
-  const { contactId, message, channel = 'whatsapp', contactName } = req.body;
+  const { contactId, message, channel = 'whatsapp', contactName, type, interactiveId } = req.body;
 
-  if (!contactId || !message) {
-    return res.status(400).json({ error: 'contactId y message son requeridos' });
+  if (!contactId || (!message && !interactiveId)) {
+    return res.status(400).json({ error: 'contactId y (message o interactiveId) son requeridos' });
   }
 
   try {
@@ -17,7 +17,9 @@ router.post('/message', async (req, res) => {
       channel,
       from: contactId,
       messageId: null,
-      text: message,
+      text: message ?? '',
+      type: type ?? undefined,
+      interactiveId: interactiveId ?? undefined,
       contactName: contactName ?? `Test-${contactId.slice(-4)}`,
     });
 

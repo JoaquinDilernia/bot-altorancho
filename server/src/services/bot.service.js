@@ -10,10 +10,11 @@ import {
   dispatchConversation,
   setUrgentFlag,
   addLabelToConversation,
+  setMenuState,
 } from './conversation.service.js';
 import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts } from './tiendanube.service.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo } from './odoo.service.js';
-import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64 } from './meta.service.js';
+import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
 import {
   getOrCreateCustomer,
   enrichCustomerFromTiendaNube,
@@ -66,6 +67,21 @@ const STOCK_PATTERNS = [
 // seguido cuando el bot ya preguntó "¿qué producto?" y el cliente responde
 // solo con el SKU.
 const SKU_PATTERN = /\b[A-Z]{2,5}\d{2,5}[A-Z]{1,5}\b/i;
+
+// --- Flujo guiado por menú (bot_config.flowMode === 'menu') ---
+const ENTRY_MENU_BODY = '¡Hola! 👋 Elegí una opción para que te pueda ayudar más rápido:';
+const ENTRY_MENU_BUTTON_TEXT = 'Ver opciones';
+const ENTRY_MENU_SECTIONS = [
+  {
+    title: 'Alto Rancho',
+    rows: [
+      { id: 'menu_order_status', title: 'Estado de pedido', description: 'Consultar en qué está tu pedido' },
+      { id: 'menu_order_change', title: 'Cambios y devoluciones', description: 'Cambiar o devolver un producto' },
+      { id: 'menu_stock', title: 'Stock y productos', description: 'Consultar disponibilidad' },
+      { id: 'menu_talk_to_agent', title: 'Hablar con alguien', description: 'Te derivamos con el equipo' },
+    ],
+  },
+];
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /devolución/i, /devolucion/i, /reembolso/i,
@@ -139,6 +155,16 @@ function parseLabelMarkers(text) {
   return { labels, newLabels, cleanText };
 }
 
+async function sendEntryMenu(to) {
+  try {
+    const sent = await sendWhatsAppInteractiveList(to, ENTRY_MENU_BODY, ENTRY_MENU_BUTTON_TEXT, ENTRY_MENU_SECTIONS);
+    return !!sent;
+  } catch (err) {
+    console.error('[bot] Error enviando menú de entrada:', err.message);
+    return false;
+  }
+}
+
 // WhatsApp suele mandar mensajes de un mismo contacto en ráfagas de a
 // segundos (varias burbujas separadas). Cada una llega como un webhook HTTP
 // independiente y Express los procesa en paralelo, así que sin esta cola
@@ -196,10 +222,13 @@ async function processIncomingMessageInternal(msg) {
       updateConversationStatus(from, 'bot'),
       updateHumanMode(from, false),
       updateAssignment(from, null),
+      setMenuState(from, { menuShown: false, pendingMenuTopic: null }),
     ]);
     conversation.status = 'bot';
     conversation.humanMode = false;
     conversation.assignedTo = null;
+    conversation.menuShown = false;
+    conversation.pendingMenuTopic = null;
     console.log(`[bot] Conversación ${from} reabierta automáticamente desde '${previousStatus}'`);
   }
 
@@ -225,6 +254,23 @@ async function processIncomingMessageInternal(msg) {
     }
     console.log(`[bot] humanMode activo para ${from} — bot silenciado`);
     return;
+  }
+
+  // --- Menú guiado (flowMode === 'menu') ---
+  if (channel === 'whatsapp' && botConfig.flowMode === 'menu' && !conversation.menuShown) {
+    const sent = await sendEntryMenu(from);
+    if (sent) {
+      if (text?.trim()) {
+        await appendMessage(from, { role: 'user', content: text, contactName });
+      }
+      await appendMessage(from, { role: 'assistant', content: ENTRY_MENU_BODY });
+      await setMenuState(from, { menuShown: true });
+      console.log(`[bot] Menú de entrada enviado a ${from}`);
+      return;
+    }
+    // Si falla el envío, no guardamos el mensaje del usuario acá — sigue el
+    // flujo normal de abajo, que lo va a guardar una sola vez.
+    console.warn(`[bot] No se pudo enviar el menú de entrada a ${from} — sigue el flujo normal`);
   }
 
   // --- Non-text type handling ---
