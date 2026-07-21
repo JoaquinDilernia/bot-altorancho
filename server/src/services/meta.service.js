@@ -65,6 +65,66 @@ export async function sendWhatsAppMessage(to, text) {
   return data.messages?.[0]?.id ?? null;
 }
 
+// Returns WA message ID on success, null if tokens not configured
+export async function sendWhatsAppInteractiveList(to, bodyText, buttonText, sections) {
+  if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) {
+    console.log('[meta] sendWhatsAppInteractiveList skipped — tokens not configured');
+    return null;
+  }
+  const { data } = await postWithSafeRetry(
+    `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'list',
+        body: { text: bodyText },
+        action: { button: buttonText, sections },
+      },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+  return data.messages?.[0]?.id ?? null;
+}
+
+// Returns WA message ID on success, null if tokens not configured
+export async function sendWhatsAppInteractiveButtons(to, bodyText, buttons) {
+  if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) {
+    console.log('[meta] sendWhatsAppInteractiveButtons skipped — tokens not configured');
+    return null;
+  }
+  const { data } = await postWithSafeRetry(
+    `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
+    {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: { text: bodyText },
+        action: {
+          buttons: buttons.map(b => ({ type: 'reply', reply: { id: b.id, title: b.title } })),
+        },
+      },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+  return data.messages?.[0]?.id ?? null;
+}
+
 export async function sendInstagramMessage(recipientId, text) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_IG_PAGE_ID) {
     console.log('[meta] sendInstagramMessage skipped — tokens not configured');
@@ -239,6 +299,23 @@ export function parseWhatsAppMessage(webhookBody) {
     if (!value?.messages?.[0]) return null;
 
     const msg = value.messages[0];
+    const contactName = value.contacts?.[0]?.profile?.name ?? 'Cliente';
+
+    if (msg.type === 'interactive') {
+      const reply = msg.interactive?.list_reply ?? msg.interactive?.button_reply;
+      return {
+        channel: 'whatsapp',
+        from: msg.from,
+        messageId: msg.id,
+        text: reply?.title ?? '',
+        type: 'interactive',
+        interactiveId: reply?.id ?? null,
+        mediaId: null,
+        timestamp: msg.timestamp,
+        contactName,
+      };
+    }
+
     const MEDIA_TYPES = ['image', 'audio', 'video', 'document', 'sticker'];
     const mediaId = MEDIA_TYPES.includes(msg.type) ? msg[msg.type]?.id : null;
     const caption = MEDIA_TYPES.includes(msg.type) ? (msg[msg.type]?.caption ?? '') : '';
@@ -251,7 +328,7 @@ export function parseWhatsAppMessage(webhookBody) {
       type: msg.type,
       mediaId,
       timestamp: msg.timestamp,
-      contactName: value.contacts?.[0]?.profile?.name ?? 'Cliente',
+      contactName,
     };
   } catch {
     return null;
