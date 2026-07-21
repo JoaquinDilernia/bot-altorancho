@@ -48,6 +48,7 @@ function getDefaultConfig() {
       },
     },
     channels: { whatsapp: true, instagram: true },
+    flowMode: 'freeform',
   };
 }
 

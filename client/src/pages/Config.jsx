@@ -128,6 +128,23 @@ export default function Config() {
           </div>
         </section>
 
+        {/* Flujo de conversación */}
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>Flujo de conversación</h2>
+            <ToggleField
+              label="Menú guiado (beta)"
+              checked={config.flowMode === 'menu'}
+              onChange={(v) => setConfig({ ...config, flowMode: v ? 'menu' : 'freeform' })}
+            />
+          </div>
+          <p className={styles.hint}>
+            Si está activo, la primera vez que un cliente escribe por WhatsApp ve un menú con botones
+            (Estado de pedido / Cambios y devoluciones / Stock / Hablar con alguien) antes de pasar al chat libre con IA.
+            Si el cliente ignora el menú y escribe directamente, el bot sigue funcionando como siempre.
+          </p>
+        </section>
+
         {/* Horarios */}
         <section className={styles.section}>
           <div className={styles.sectionHead}>
