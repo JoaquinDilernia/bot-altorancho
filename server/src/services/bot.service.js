@@ -91,6 +91,7 @@ const ORDER_TOPIC_FOLLOWUP = {
   order_status: 'Dale, pasame el número de tu pedido (o el comprobante si fue en un local) para chequear el estado.',
   order_change: 'Perfecto, pasame el número de tu pedido (o el comprobante si fue en un local) para gestionar el cambio.',
 };
+const STOCK_MENU_PROMPT = '¿Qué producto o SKU estás buscando?';
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /devolución/i, /devolucion/i, /reembolso/i,
@@ -193,6 +194,13 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
     await appendMessage(from, { role: 'assistant', content: followup });
     await sendWhatsAppMessage(from, followup)
       .catch(err => console.error('[bot] Error enviando prompt de pedido:', err.message));
+    return true;
+  }
+
+  if (interactiveId === 'menu_stock') {
+    await appendMessage(from, { role: 'assistant', content: STOCK_MENU_PROMPT });
+    await sendWhatsAppMessage(from, STOCK_MENU_PROMPT)
+      .catch(err => console.error('[bot] Error enviando prompt de stock:', err.message));
     return true;
   }
 
