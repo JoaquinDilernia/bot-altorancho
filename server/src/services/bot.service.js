@@ -92,6 +92,14 @@ const ORDER_TOPIC_FOLLOWUP = {
   order_change: 'Perfecto, pasame el número de tu pedido (o el comprobante si fue en un local) para gestionar el cambio.',
 };
 const STOCK_MENU_PROMPT = '¿Qué producto o SKU estás buscando?';
+const TALK_TO_AGENT_PROMPT = '¿Con qué equipo querés hablar?';
+
+function buildDepartmentSections(departments) {
+  return [{
+    title: 'Equipo Alto Rancho',
+    rows: departments.map(d => ({ id: `dept_${d.id}`, title: d.name.slice(0, 24) })),
+  }];
+}
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /devolución/i, /devolucion/i, /reembolso/i,
@@ -175,7 +183,7 @@ async function sendEntryMenu(to) {
   }
 }
 
-async function handleMenuInteraction({ from, channel, interactiveId, conversation }) {
+async function handleMenuInteraction({ from, channel, interactiveId, conversation, departments, botConfig }) {
   if (channel !== 'whatsapp') return false;
 
   if (interactiveId === 'menu_order_status' || interactiveId === 'menu_order_change') {
@@ -201,6 +209,25 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
     await appendMessage(from, { role: 'assistant', content: STOCK_MENU_PROMPT });
     await sendWhatsAppMessage(from, STOCK_MENU_PROMPT)
       .catch(err => console.error('[bot] Error enviando prompt de stock:', err.message));
+    return true;
+  }
+
+  if (interactiveId === 'menu_talk_to_agent') {
+    await appendMessage(from, { role: 'assistant', content: TALK_TO_AGENT_PROMPT });
+    await sendWhatsAppInteractiveList(from, TALK_TO_AGENT_PROMPT, 'Ver equipos', buildDepartmentSections(departments))
+      .catch(err => console.error('[bot] Error enviando lista de departamentos:', err.message));
+    return true;
+  }
+
+  if (interactiveId?.startsWith('dept_')) {
+    const deptId = interactiveId.slice('dept_'.length);
+    const dept = departments.find(d => d.id === deptId);
+    const deptName = dept?.name ?? 'Atención al cliente';
+    await dispatchConversation(from, { status: 'escalated', humanMode: true, assignedTo: dept?.id ?? null });
+    const escalationMsg = buildEscalationMessage(deptName, botConfig);
+    await appendMessage(from, { role: 'assistant', content: escalationMsg });
+    await sendWhatsAppMessage(from, escalationMsg)
+      .catch(err => console.error('[bot] Error enviando confirmación de escalación:', err.message));
     return true;
   }
 
