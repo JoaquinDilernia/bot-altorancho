@@ -82,6 +82,15 @@ const ENTRY_MENU_SECTIONS = [
     ],
   },
 ];
+const WEB_LOCAL_PROMPT = '¿Fue una compra por la web o en uno de nuestros locales?';
+const WEB_LOCAL_BUTTONS = [
+  { id: 'web', title: 'Por la web' },
+  { id: 'local', title: 'En un local' },
+];
+const ORDER_TOPIC_FOLLOWUP = {
+  order_status: 'Dale, pasame el número de tu pedido (o el comprobante si fue en un local) para chequear el estado.',
+  order_change: 'Perfecto, pasame el número de tu pedido (o el comprobante si fue en un local) para gestionar el cambio.',
+};
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /devolución/i, /devolucion/i, /reembolso/i,
@@ -163,6 +172,31 @@ async function sendEntryMenu(to) {
     console.error('[bot] Error enviando menú de entrada:', err.message);
     return false;
   }
+}
+
+async function handleMenuInteraction({ from, channel, interactiveId, conversation }) {
+  if (channel !== 'whatsapp') return false;
+
+  if (interactiveId === 'menu_order_status' || interactiveId === 'menu_order_change') {
+    const topic = interactiveId === 'menu_order_status' ? 'order_status' : 'order_change';
+    await setMenuState(from, { pendingMenuTopic: topic });
+    await appendMessage(from, { role: 'assistant', content: WEB_LOCAL_PROMPT });
+    await sendWhatsAppInteractiveButtons(from, WEB_LOCAL_PROMPT, WEB_LOCAL_BUTTONS)
+      .catch(err => console.error('[bot] Error enviando botones web/local:', err.message));
+    return true;
+  }
+
+  if (interactiveId === 'web' || interactiveId === 'local') {
+    const topic = conversation.pendingMenuTopic;
+    const followup = ORDER_TOPIC_FOLLOWUP[topic] ?? ORDER_TOPIC_FOLLOWUP.order_status;
+    await setMenuState(from, { pendingMenuTopic: null });
+    await appendMessage(from, { role: 'assistant', content: followup });
+    await sendWhatsAppMessage(from, followup)
+      .catch(err => console.error('[bot] Error enviando prompt de pedido:', err.message));
+    return true;
+  }
+
+  return false;
 }
 
 // WhatsApp suele mandar mensajes de un mismo contacto en ráfagas de a
@@ -271,6 +305,19 @@ async function processIncomingMessageInternal(msg) {
     // Si falla el envío, no guardamos el mensaje del usuario acá — sigue el
     // flujo normal de abajo, que lo va a guardar una sola vez.
     console.warn(`[bot] No se pudo enviar el menú de entrada a ${from} — sigue el flujo normal`);
+  }
+
+  // --- Respuestas del menú guiado (botones/listas) ---
+  if (type === 'interactive') {
+    await appendMessage(from, { role: 'user', content: text || '(selección de menú)', contactName });
+    const handled = await handleMenuInteraction({ from, channel, interactiveId: msg.interactiveId, conversation, departments, botConfig });
+    if (!handled) {
+      console.warn(`[bot] interactiveId no reconocido para ${from}: ${msg.interactiveId}`);
+      const fallbackMsg = 'Perdón, no reconocí esa opción. ¿Podés contarme en tus propias palabras en qué te ayudo?';
+      await appendMessage(from, { role: 'assistant', content: fallbackMsg });
+      await sendWhatsAppMessage(from, fallbackMsg).catch(() => {});
+    }
+    return;
   }
 
   // --- Non-text type handling ---
