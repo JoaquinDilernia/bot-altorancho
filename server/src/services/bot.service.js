@@ -24,20 +24,23 @@ import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveDepartments } from './department.service.js';
 import { getDb } from './firebase.service.js';
 
-// Captura números Odoo (S08121), TiendaNube (TN1999675391) y números puros
+// Captura números Odoo (S08121), TiendaNube (TN1999675391) y números puros.
+// El número puede venir con o sin "#" y en cualquier parte del mensaje — NO
+// hace falta que esté pegado a la palabra clave (ej: "mi pedido es el 20610"
+// o "el número de pedido es #20610" tienen que encontrar el 20610 igual que
+// "pedido #20610").
 const ORDER_REF = '[A-Z]{0,2}\\d{3,}';
-const ORDER_PATTERNS = [
-  new RegExp(`pedido\\s*#?\\s*(${ORDER_REF})`, 'i'),
-  new RegExp(`orden\\s*#?\\s*(${ORDER_REF})`, 'i'),
-  new RegExp(`compra\\s*#?\\s*(${ORDER_REF})`, 'i'),
-  new RegExp(`número\\s*#?\\s*(${ORDER_REF})`, 'i'),
-  new RegExp(`^#?(${ORDER_REF})$`, 'i'),
+const ORDER_REF_TOKEN = new RegExp(`#?(${ORDER_REF})\\b`, 'i');
+const ORDER_BARE_NUMBER = new RegExp(`^#?(${ORDER_REF})$`, 'i');
+const ORDER_KEYWORD = /\b(pedido|orden|compra|n[uú]mero)\b/i;
+// Menciones de una compra sin número (frecuente en compras de local físico,
+// que el cliente no suele identificar con un número de pedido) — van directo
+// al flujo de "sin número" sin necesidad de encontrar un token de dígitos.
+const ORDER_INTENT_NO_NUMBER_PATTERNS = [
   /tracking/i,
   /donde\s*(está|esta)\s*(mi|el)\s*pedido/i,
   /estado\s*(de|del)\s*(mi|el)?\s*pedido/i,
   /cuándo\s*(llega|llega)/i,
-  // Compra mencionada sin número (frecuente en compras de local físico,
-  // que el cliente no suele identificar con un número de pedido)
   /mi\s+compra\b/i,
   /compr[eé]\s+(?:algo|un|una|el|la)\b/i,
 ];
@@ -56,6 +59,13 @@ const STOCK_PATTERNS = [
   /en\s+sucursal/i,
   /en\s+(?:la\s+)?tienda/i,
 ];
+
+// SKU propio: letras + dígitos + letras (ej: IME054CH, DOF126RS). El dígito en
+// el medio lo distingue de una palabra común, así que alcanza como señal de
+// intención aunque el mensaje no traiga ninguna palabra clave de stock — pasa
+// seguido cuando el bot ya preguntó "¿qué producto?" y el cliente responde
+// solo con el SKU.
+const SKU_PATTERN = /\b[A-Z]{2,5}\d{2,5}[A-Z]{1,5}\b/i;
 
 const URGENCY_KEYWORDS = [
   /urgente/i, /urgencia/i, /devolución/i, /devolucion/i, /reembolso/i,
@@ -129,7 +139,30 @@ function parseLabelMarkers(text) {
   return { labels, newLabels, cleanText };
 }
 
-export async function processIncomingMessage(msg) {
+// WhatsApp suele mandar mensajes de un mismo contacto en ráfagas de a
+// segundos (varias burbujas separadas). Cada una llega como un webhook HTTP
+// independiente y Express los procesa en paralelo, así que sin esta cola
+// dos mensajes casi simultáneos disparan dos llamadas a Claude en paralelo
+// con el mismo historial de partida — cada una responde y escala por su
+// cuenta, duplicando respuestas y derivaciones al equipo. Serializamos por
+// contactId para que el segundo mensaje espere a que el primero termine de
+// guardar su respuesta antes de arrancar.
+const contactLocks = new Map();
+
+export function processIncomingMessage(msg) {
+  const contactId = msg.from;
+  const previous = contactLocks.get(contactId) ?? Promise.resolve();
+  const current = previous
+    .catch(() => {})
+    .then(() => processIncomingMessageInternal(msg))
+    .finally(() => {
+      if (contactLocks.get(contactId) === current) contactLocks.delete(contactId);
+    });
+  contactLocks.set(contactId, current);
+  return current;
+}
+
+async function processIncomingMessageInternal(msg) {
   const { channel, from, messageId, text, type, mediaId, mediaUrl, contactName } = msg;
 
   if (channel === 'whatsapp' && messageId) {
@@ -280,6 +313,7 @@ export async function processIncomingMessage(msg) {
     botReply = await generateBotResponse(text ?? '', history, {
       knowledgeBase,
       orderInfo: orderContext.orderInfo,
+      orderRef: orderContext.orderRef,
       stockInfo,
       customerContext,
       availableLabels: availableLabels.map(l => l.name),
@@ -362,7 +396,26 @@ export async function processIncomingMessage(msg) {
 }
 
 async function resolveStockContext(text) {
-  if (!text || !STOCK_PATTERNS.some(re => re.test(text))) return null;
+  if (!text) return null;
+
+  // El cliente pasó directamente un SKU (típico cuando el bot ya preguntó
+  // "¿qué producto?" y responde solo con el código) → consultar Odoo directo,
+  // sin depender de las palabras clave de STOCK_PATTERNS ni de la búsqueda
+  // por nombre en TiendaNube.
+  const skuMatch = text.match(SKU_PATTERN);
+  if (skuMatch) {
+    try {
+      const sku = skuMatch[0].toUpperCase();
+      const stockResult = await getStockBySku(sku);
+      console.log(`[bot] stock para SKU ${sku} (detectado directo):`, stockResult);
+      return formatStockInfo(sku, sku, stockResult);
+    } catch (err) {
+      console.error('[bot] resolveStockContext (SKU directo) error:', err.message);
+      return null;
+    }
+  }
+
+  if (!STOCK_PATTERNS.some(re => re.test(text))) return null;
 
   try {
     const products = await searchProducts(text);
@@ -412,40 +465,49 @@ async function resolveOrderContext(text, customer, conversation = {}, from = nul
     return { orderInfo: null, tnCustomer: null };
   }
 
-  for (const pattern of ORDER_PATTERNS) {
-    const match = trimmed.match(pattern);
-    if (match) {
-      const orderRef = match[1] ?? null;
+  // Mensaje es directamente el número (con o sin "#"), ej: bot preguntó
+  // "¿número de pedido?" y el cliente contesta solo "20610" o "#20610".
+  const bareMatch = trimmed.match(ORDER_BARE_NUMBER);
 
-      if (orderRef) {
-        const result = await searchOrderByRef(orderRef);
-        return { ...result, orderRef };
-      }
+  // Palabra clave de pedido en cualquier parte del mensaje + número en
+  // cualquier parte del mensaje (no hace falta que estén pegados).
+  const hasKeyword = ORDER_KEYWORD.test(trimmed);
+  const tokenMatch = trimmed.match(ORDER_REF_TOKEN);
 
-      // Sin número → priorizar la última orden mencionada en esta conversación,
-      // luego la del perfil del cliente
-      const fallbackRef = conversation.lastOrderRef ?? String(customer?.tnOrders?.[0]?.number ?? '');
-      if (fallbackRef) {
-        console.log(`[bot] Sin número en mensaje, usando orden del contexto: #${fallbackRef}`);
-        const result = await searchOrderByRef(fallbackRef);
-        return { ...result, orderRef: fallbackRef };
-      }
+  const orderRef = bareMatch?.[1] ?? (hasKeyword && tokenMatch ? tokenMatch[1] : null);
 
-      // Tampoco hay referencia previa: puede ser una compra de local físico,
-      // que no queda registrada en TiendaNube. Buscar en Odoo por el teléfono
-      // del cliente (ya lo tenemos, es el número de WhatsApp) antes de rendirse.
-      if (from) {
-        const odooOrders = await findOdooOrdersByContact(from);
-        if (odooOrders.length) {
-          console.log(`[bot] Pedido de local encontrado en Odoo por teléfono para ${from}`);
-          const summary = odooOrders.map(o => formatOdooOrder(o)).filter(Boolean);
-          return { orderInfo: summary, tnCustomer: null };
-        }
-      }
-
-      return { orderInfo: null, tnCustomer: null };
-    }
+  if (orderRef) {
+    const result = await searchOrderByRef(orderRef, customer?.tnEmail);
+    return { ...result, orderRef };
   }
+
+  // Hay intención de consultar un pedido/compra pero sin número
+  const hasIntentWithoutNumber = hasKeyword || ORDER_INTENT_NO_NUMBER_PATTERNS.some(re => re.test(trimmed));
+  if (hasIntentWithoutNumber) {
+    // Sin número → priorizar la última orden mencionada en esta conversación,
+    // luego la del perfil del cliente
+    const fallbackRef = conversation.lastOrderRef ?? String(customer?.tnOrders?.[0]?.number ?? '');
+    if (fallbackRef) {
+      console.log(`[bot] Sin número en mensaje, usando orden del contexto: #${fallbackRef}`);
+      const result = await searchOrderByRef(fallbackRef, customer?.tnEmail);
+      return { ...result, orderRef: fallbackRef };
+    }
+
+    // Tampoco hay referencia previa: puede ser una compra de local físico,
+    // que no queda registrada en TiendaNube. Buscar en Odoo por el teléfono
+    // del cliente (ya lo tenemos, es el número de WhatsApp) antes de rendirse.
+    if (from) {
+      const odooOrders = await findOdooOrdersByContact(from);
+      if (odooOrders.length) {
+        console.log(`[bot] Pedido de local encontrado en Odoo por teléfono para ${from}`);
+        const summary = odooOrders.map(o => formatOdooOrder(o)).filter(Boolean);
+        return { orderInfo: summary, tnCustomer: null };
+      }
+    }
+
+    return { orderInfo: null, tnCustomer: null };
+  }
+
   return { orderInfo: null, tnCustomer: null };
 }
 
@@ -459,39 +521,35 @@ async function resolveOrderContext(text, customer, conversation = {}, from = nul
  * - TN-prefijo (TN123...)  → Odoo directo (referencia interna de pedido web importado)
  * - Alfanumérico genérico  → Odoo directo
  */
-async function searchOrderByRef(orderRef) {
+async function searchOrderByRef(orderRef, email = null) {
   const isPureNumber = /^\d+$/.test(orderRef);
   const isOdooLocal  = /^S\d+$/i.test(orderRef);
   const isOdooTN     = /^TN\d+$/i.test(orderRef);
 
-  // --- Número puro: pedido web de TiendaNube ---
+  // --- Número puro: pedido web, se busca ÚNICA Y EXCLUSIVAMENTE en TiendaNube.
+  // Los pedidos de local usan referencia con prefijo "S" (ver más abajo) y
+  // pasan por Odoo; un número puro siempre es un pedido web, así que nunca
+  // hace falta (ni conviene) consultar Odoo acá.
   if (isPureNumber) {
     const tnOrder = await findOrder(orderRef);
 
     if (tnOrder) {
       console.log(`[bot] Pedido #${orderRef} encontrado en TiendaNube (TN id: ${tnOrder.id})`);
-      const tnFormatted = formatOrderStatus(tnOrder);
-
-      // Intentar enriquecer con Odoo usando el ID interno de TiendaNube
-      try {
-        const odooResult = await findOdooOrder(`TN${tnOrder.id}`);
-        if (odooResult) {
-          const odooInfo = formatOdooOrder(odooResult.order, odooResult.lines);
-          if (tnOrder.shipping_tracking_url) odooInfo.tracking = tnOrder.shipping_tracking_url;
-          return { orderInfo: odooInfo, tnCustomer: tnOrder.customer ?? null };
-        }
-      } catch (err) {
-        console.warn(`[bot] No se pudo enriquecer TN${tnOrder.id} en Odoo:`, err.message);
-      }
-
-      return { orderInfo: tnFormatted, tnCustomer: tnOrder.customer ?? null };
+      return { orderInfo: formatOrderStatus(tnOrder), tnCustomer: tnOrder.customer ?? null };
     }
 
-    // Fallback: puede ser un pedido de local con número numérico en Odoo
-    console.log(`[bot] Pedido #${orderRef} no encontrado en TiendaNube, buscando en Odoo...`);
-    const odooResult = await findOdooOrder(orderRef);
-    if (odooResult) {
-      return { orderInfo: formatOdooOrder(odooResult.order, odooResult.lines), tnCustomer: null };
+    // Último recurso: si ya sabemos el email del cliente en esta conversación
+    // (por ejemplo lo dio en un mensaje anterior), reintentar por email.
+    // Cubre pedidos 'open' que q= no indexa y que la paginación por número
+    // puede fallar en encontrar bajo tráfico alto (rate limiting de TiendaNube).
+    if (email) {
+      console.log(`[bot] Pedido #${orderRef} no encontrado, reintentando por email conocido (${email})`);
+      const emailOrders = await findOrdersByEmail(email);
+      const match = emailOrders.find(o => String(o.number) === orderRef);
+      if (match) {
+        console.log(`[bot] Pedido #${orderRef} encontrado vía email conocido`);
+        return { orderInfo: formatOrderStatus(match), tnCustomer: match.customer ?? null };
+      }
     }
 
     return { orderInfo: null, tnCustomer: null };

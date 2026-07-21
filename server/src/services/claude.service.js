@@ -135,9 +135,9 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, stockInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
+  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, stockInfo, customerContext, availableLabels, departments);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, customerContext, availableLabels, departments);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -151,7 +151,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return response.content[0].text;
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, stockInfo, customerContext, availableLabels = [], departments = []) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, customerContext, availableLabels = [], departments = []) {
   const botName = botConfig.botName || 'Asistente';
   const businessName = botConfig.businessName || 'Alto Rancho';
   const personality = botConfig.botPersonality ||
@@ -170,9 +170,10 @@ Si el nombre del titular del pedido es distinto al nombre de la persona que te e
     prompt += `\n\nIMPORTANTE — USO DE LA INFORMACIÓN DE LA TIENDA: Es TU ÚNICA fuente de verdad para políticas, procesos, links y datos de la tienda. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente (ej: si dice que quiere hacer un cambio, pasale el link/proceso de cambios de esta sección sin que lo pida). Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.`;
   }
   if (customerContext) prompt += `\n\n--- PERFIL DEL CLIENTE ---\n${customerContext}`;
-  prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos. Si el cliente menciona una compra y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si fue de un LOCAL, las compras en local TAMBIÉN tienen número de comprobante/ticket (suele empezar con "S", ej: S08121) — pedile ese número y buscalo, exactamente igual que harías con un número de pedido web. (3) Si no tiene el número a mano o sigue sin encontrarse después de buscarlo, ahí sí pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local, y si es local pedí el número de comprobante antes de pedir el email.`;
+  prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes en la conversación. Si el cliente menciona una compra y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si fue de un LOCAL, las compras en local TAMBIÉN tienen número de comprobante/ticket (suele empezar con "S", ej: S08121) — pedile ese número y buscalo, exactamente igual que harías con un número de pedido web. (3) Si no tiene el número a mano o sigue sin encontrarse después de buscarlo, ahí sí pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local, y si es local pedí el número de comprobante antes de pedir el email.`;
   if (orderInfo) {
     prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
+    prompt += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores de esta conversación dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad sin mencionar la búsqueda anterior.`;
     prompt += `\n\nGuía para interpretar el pedido:
 - tipo "WEB" → pedido de e-commerce (TiendaNube u otro canal web). Puede tener número de seguimiento.
 - tipo "LOCAL" → pedido hecho en el local físico. El campo "local" indica la sucursal (Belgrano, Las Lomas, Alcorta, Rolón Local, etc.).
@@ -185,6 +186,8 @@ Si el nombre del titular del pedido es distinto al nombre de la persona que te e
 - Si hay tracking, siempre compartilo directamente sin que el cliente lo pida.
 - Si hay nota en el pedido, tenerla en cuenta para dar contexto.
 - El método de envío puede ser Andreani u otro — no lo inventes si no está en los datos.`;
+  } else if (orderRef) {
+    prompt += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en TiendaNube y Odoo AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste y seguí el protocolo de la REGLA CRÍTICA SOBRE PEDIDOS (preguntar si es web/local, pedir comprobante, y como último recurso el email).`;
   }
   if (stockInfo) {
     prompt += `\n\n--- STOCK EN SUCURSALES ---\n${stockInfo}`;
