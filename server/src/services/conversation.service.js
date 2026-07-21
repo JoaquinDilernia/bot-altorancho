@@ -32,6 +32,8 @@ export async function getOrCreateConversation(contactId, channel, contactName = 
     unread: 0,
     consecutiveClientMessages: 0,
     lastClientMessageAt: null,
+    menuShown: false,
+    pendingMenuTopic: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -114,6 +116,14 @@ export async function updateAssignment(contactId, assignedTo) {
     assignedTo: assignedTo ?? null,
     updatedAt: new Date(),
   });
+}
+
+export async function setMenuState(contactId, { menuShown, pendingMenuTopic } = {}) {
+  const db = getDb();
+  const update = { updatedAt: new Date() };
+  if (menuShown !== undefined) update.menuShown = !!menuShown;
+  if (pendingMenuTopic !== undefined) update.pendingMenuTopic = pendingMenuTopic;
+  await db.collection(COLLECTION).doc(contactId).update(update);
 }
 
 export async function setUrgentFlag(contactId, urgent) {
