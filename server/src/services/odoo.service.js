@@ -62,6 +62,19 @@ const ECOMMERCE_WAREHOUSE_ID = 24;
 // Las 3 tiendas físicas al público (en orden de display)
 const KNOWN_STORES = ['Belgrano', 'Las Lomas', 'Alcorta'];
 
+// Nombres EXACTOS de pos.config en Odoo — las compras hechas físicamente en
+// el local son pos.order (punto de venta), no sale.order, y su campo "name"
+// usa el formato "{Local}/{número}" (ej: "Belgrano/12043"). Son un modelo y
+// una numeración totalmente distintos de los pedidos "S..." (esos sí son
+// sale.order cargados a mano en Odoo, sin pasar por el punto de venta).
+export const LOCAL_STORES = [
+  { id: 'belgrano', name: 'Belgrano' },
+  { id: 'lomas', name: 'Las Lomas de San Isidro' },
+  { id: 'alcorta', name: 'Alcorta' },
+];
+
+const POS_ORDER_FIELDS = ['name', 'state', 'partner_id', 'amount_total', 'date_order', 'lines', 'note', 'config_id'];
+
 // Umbral para "Quedan pocos" (qty > 0 pero menor a esto)
 const LOW_STOCK_THRESHOLD = 5;
 
@@ -135,6 +148,113 @@ export async function findOdooOrder(query) {
     console.error('[odoo] findOdooOrder error:', err.message);
     return null;
   }
+}
+
+async function getPosOrderLines(lineIds) {
+  if (!lineIds?.length) return [];
+  try {
+    return await callOdoo('pos.order.line', 'read', [lineIds],
+      { fields: ['product_id', 'qty', 'full_product_name'] });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Busca una compra hecha en un local físico (punto de venta) por local + número.
+ * @param {string} storeName - nombre EXACTO de pos.config (ver LOCAL_STORES)
+ * @param {string|number} number
+ */
+export async function findPosOrder(storeName, number) {
+  const raw = String(number).trim();
+  const stripped = raw.replace(/^0+/, '') || '0';
+  const candidates = [...new Set([`${storeName}/${raw}`, `${storeName}/${stripped}`])];
+
+  try {
+    const results = await callOdoo('pos.order', 'search_read',
+      [[['name', 'in', candidates]]], { fields: POS_ORDER_FIELDS, limit: 5 });
+
+    if (!results?.length) {
+      console.log(`[odoo] Sin resultados de punto de venta para "${storeName}/${raw}"`);
+      return null;
+    }
+    const order = results[0];
+    console.log(`[odoo] Pedido de local encontrado: ${order.name}`);
+    const lines = await getPosOrderLines(order.lines);
+    return { order, lines };
+  } catch (err) {
+    console.error('[odoo] findPosOrder error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Busca compras de local físico (pos.order) de un cliente por teléfono o email.
+ * Complemento de findOdooOrdersByContact (esa busca sale.order) — un cliente
+ * de local puede no tener nunca un sale.order asociado.
+ */
+export async function findPosOrdersByContact(contact) {
+  const isEmail = contact.includes('@');
+  const field = isEmail ? 'email' : 'phone';
+  const normalized = contact.replace(/[\s+\-()]/g, '');
+  const searchValue = isEmail ? contact : normalized.slice(-8);
+
+  try {
+    const partners = await callOdoo('res.partner', 'search_read',
+      [[[field, 'ilike', searchValue]]],
+      { fields: ['id', 'name'], limit: 5 });
+
+    if (!partners?.length) return [];
+
+    const partnerIds = partners.map(p => p.id);
+    const orders = await callOdoo('pos.order', 'search_read',
+      [[['partner_id', 'in', partnerIds], ['state', '!=', 'cancel']]],
+      { fields: POS_ORDER_FIELDS, limit: 5, order: 'date_order desc' });
+
+    return orders ?? [];
+  } catch (err) {
+    console.error('[odoo] findPosOrdersByContact error:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Formatea un pedido de punto de venta (compra en local) en texto legible.
+ */
+export function formatPosOrder(order, lines = []) {
+  if (!order) return null;
+
+  const stateMap = {
+    draft:    'pendiente de pago',
+    cancel:   'cancelado',
+    paid:     'pagado',
+    done:     'pagado',
+    invoiced: 'facturado',
+  };
+
+  const productos = lines
+    .filter(l => l.product_id)
+    .map(l => `${l.full_product_name ?? (Array.isArray(l.product_id) ? l.product_id[1] : 'Producto')} x${l.qty}`)
+    .join(', ') || null;
+
+  const configName = Array.isArray(order.config_id) ? order.config_id[1] : null;
+  const local = configName ? configName.replace(/\s*\(.*\)$/, '') : null;
+
+  return {
+    numero:   order.name,
+    tipo:     'LOCAL',
+    local,
+    estado:   stateMap[order.state] ?? order.state,
+    envio:    null,
+    pago:     stateMap[order.state] ?? order.state,
+    total:    order.amount_total,
+    cliente:  Array.isArray(order.partner_id) ? order.partner_id[1] : 'Cliente',
+    productos,
+    fecha:    order.date_order
+      ? new Date(order.date_order).toLocaleDateString('es-AR')
+      : null,
+    nota:     order.note ?? null,
+  };
 }
 
 /**

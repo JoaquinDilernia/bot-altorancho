@@ -13,7 +13,7 @@ import {
   setMenuState,
 } from './conversation.service.js';
 import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts } from './tiendanube.service.js';
-import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo } from './odoo.service.js';
+import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo, findPosOrder, findPosOrdersByContact, formatPosOrder, LOCAL_STORES } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
 import {
   getOrCreateCustomer,
@@ -88,6 +88,24 @@ const WEB_LOCAL_BUTTONS = [
   { id: 'web', title: 'Por la web' },
   { id: 'local', title: 'En un local' },
 ];
+// Las compras de local son pos.order en Odoo (no sale.order) y su referencia
+// depende del local exacto (ej: "Belgrano/12043") — hace falta saber CUÁL
+// local antes de poder buscar el número, así que se pregunta como paso
+// intermedio entre elegir "local" y pedir el número/comprobante.
+const LOCAL_STORE_PROMPT = '¿En qué local fue la compra?';
+const LOCAL_STORE_BUTTONS = LOCAL_STORES.map(s => ({ id: `store_${s.id}`, title: s.name === 'Las Lomas de San Isidro' ? 'Las Lomas' : s.name }));
+const STORE_NAME_BY_BUTTON_ID = Object.fromEntries(LOCAL_STORES.map(s => [`store_${s.id}`, s.name]));
+// Detección de mención de local en texto libre (fuera del menú guiado por
+// botones) — ej: "compré en el local de las lomas", "es de Alcorta".
+const STORE_TEXT_PATTERNS = [
+  { name: 'Belgrano', re: /\bbelgrano\b/i },
+  { name: 'Las Lomas de San Isidro', re: /\b(las?\s*)?lomas\b|san\s*isidro/i },
+  { name: 'Alcorta', re: /\balcorta\b/i },
+];
+function detectStoreMention(text) {
+  const match = STORE_TEXT_PATTERNS.find(s => s.re.test(text));
+  return match?.name ?? null;
+}
 // Mensaje de seguimiento tras elegir web/local: depende de AMBAS cosas — el
 // tema (estado/cambio) y el canal ya elegido — para no volver a mencionar la
 // otra opción (ej: si ya dijo "web", no hay que aclarar "o el comprobante si
@@ -207,14 +225,38 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
     return true;
   }
 
-  if (interactiveId === 'web' || interactiveId === 'local') {
+  if (interactiveId === 'web') {
     const topic = conversation.pendingMenuTopic;
     const followupByChannel = ORDER_TOPIC_FOLLOWUP[topic] ?? ORDER_TOPIC_FOLLOWUP.order_status;
-    const followup = followupByChannel[interactiveId] ?? followupByChannel.web;
-    await setMenuState(from, { pendingMenuTopic: null });
+    const followup = followupByChannel.web;
+    await setMenuState(from, { pendingMenuTopic: null, pendingLocalStore: null });
     await appendMessage(from, { role: 'assistant', content: followup });
     await sendWhatsAppMessage(from, followup)
       .catch(err => console.error('[bot] Error enviando prompt de pedido:', err.message));
+    return true;
+  }
+
+  if (interactiveId === 'local') {
+    // Antes de pedir el número necesitamos saber CUÁL local — los pedidos de
+    // local son pos.order y su referencia depende del local exacto (ver
+    // findPosOrder). El tema (estado/cambio) ya quedó guardado en
+    // pendingMenuTopic desde el paso anterior, se sigue necesitando.
+    await appendMessage(from, { role: 'assistant', content: LOCAL_STORE_PROMPT });
+    await sendWhatsAppInteractiveButtons(from, LOCAL_STORE_PROMPT, LOCAL_STORE_BUTTONS)
+      .catch(err => console.error('[bot] Error enviando botones de local:', err.message));
+    return true;
+  }
+
+  if (interactiveId?.startsWith('store_')) {
+    const storeName = STORE_NAME_BY_BUTTON_ID[interactiveId];
+    if (!storeName) return false;
+    const topic = conversation.pendingMenuTopic;
+    const followupByChannel = ORDER_TOPIC_FOLLOWUP[topic] ?? ORDER_TOPIC_FOLLOWUP.order_status;
+    const followup = followupByChannel.local;
+    await setMenuState(from, { pendingMenuTopic: null, pendingLocalStore: storeName });
+    await appendMessage(from, { role: 'assistant', content: followup });
+    await sendWhatsAppMessage(from, followup)
+      .catch(err => console.error('[bot] Error enviando prompt de pedido de local:', err.message));
     return true;
   }
 
@@ -457,6 +499,15 @@ async function processIncomingMessageInternal(msg) {
       .catch(() => {});
   }
 
+  // pendingLocalStore: null limpia el local guardado (ya se usó para buscar),
+  // un string lo guarda (se mencionó el local pero todavía no el número) —
+  // undefined significa "no tocar" (el mensaje no tuvo nada que ver con esto).
+  if (orderContext.pendingLocalStore !== undefined) {
+    getDb().collection('bot-altorancho_conversations').doc(from)
+      .update({ pendingLocalStore: orderContext.pendingLocalStore })
+      .catch(() => {});
+  }
+
   console.log(`[bot] Llamando a Claude para ${from}`);
   let botReply;
   try {
@@ -626,6 +677,30 @@ async function resolveOrderContext(text, customer, conversation = {}, from = nul
 
   const orderRef = bareMatch?.[1] ?? (hasKeyword && tokenMatch ? tokenMatch[1] : null);
 
+  // Ya sabemos que la compra fue en un local físico (por el menú guiado
+  // "local" → elegir sucursal, o porque lo mencionó en este mismo mensaje).
+  // Los pedidos de local son pos.order en Odoo, un modelo y una numeración
+  // totalmente distintos de los pedidos web — NUNCA hay que buscarlos en
+  // TiendaNube ni en sale.order genérico.
+  const mentionedStore = detectStoreMention(trimmed);
+  const localStore = mentionedStore ?? conversation.pendingLocalStore ?? null;
+
+  if (localStore && orderRef) {
+    const posResult = await findPosOrder(localStore, orderRef);
+    return {
+      orderInfo: posResult ? formatPosOrder(posResult.order, posResult.lines) : null,
+      tnCustomer: null,
+      orderRef,
+      pendingLocalStore: null, // consumido — limpiar para no arrastrarlo a la próxima consulta
+    };
+  }
+
+  // Mencionó el local pero todavía no el número — lo guardamos para cuando
+  // llegue el número en un mensaje posterior.
+  if (mentionedStore && !orderRef) {
+    return { orderInfo: null, tnCustomer: null, orderRef: null, pendingLocalStore: mentionedStore };
+  }
+
   if (orderRef) {
     const result = await searchOrderByRef(orderRef, customer?.tnEmail);
     return { ...result, orderRef };
@@ -643,14 +718,21 @@ async function resolveOrderContext(text, customer, conversation = {}, from = nul
       return { ...result, orderRef: fallbackRef };
     }
 
-    // Tampoco hay referencia previa: puede ser una compra de local físico,
-    // que no queda registrada en TiendaNube. Buscar en Odoo por el teléfono
-    // del cliente (ya lo tenemos, es el número de WhatsApp) antes de rendirse.
+    // Tampoco hay referencia previa: puede ser una compra de local físico.
+    // Buscar por el teléfono del cliente (ya lo tenemos, es el número de
+    // WhatsApp) tanto en pos.order (compras en local) como en sale.order
+    // (pedidos "S..." cargados a mano) antes de rendirse.
     if (from) {
-      const odooOrders = await findOdooOrdersByContact(from);
-      if (odooOrders.length) {
+      const [posOrders, odooOrders] = await Promise.all([
+        findPosOrdersByContact(from),
+        findOdooOrdersByContact(from),
+      ]);
+      if (posOrders.length || odooOrders.length) {
         console.log(`[bot] Pedido de local encontrado en Odoo por teléfono para ${from}`);
-        const summary = odooOrders.map(o => formatOdooOrder(o)).filter(Boolean);
+        const summary = [
+          ...posOrders.map(o => formatPosOrder(o)),
+          ...odooOrders.map(o => formatOdooOrder(o)),
+        ].filter(Boolean);
         return { orderInfo: summary, tnCustomer: null };
       }
     }
