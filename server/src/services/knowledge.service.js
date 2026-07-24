@@ -24,6 +24,25 @@ export async function getKnowledgeBasePrompt() {
 }
 
 /**
+ * Obtiene el contenido de un item activo de la knowledge base por título exacto.
+ * Usado por respuestas de menú guiado que necesitan un dato puntual sin pasar por Claude.
+ * @param {string} title
+ * @returns {Promise<string|null>}
+ */
+export async function getKnowledgeItemByTitle(title) {
+  const db = getDb();
+  const snapshot = await db
+    .collection(COLLECTION)
+    .where('active', '==', true)
+    .where('title', '==', title)
+    .limit(1)
+    .get();
+
+  if (snapshot.empty) return null;
+  return snapshot.docs[0].data().content;
+}
+
+/**
  * Obtiene todos los items de la knowledge base (para el dashboard).
  * @returns {Promise<Array>}
  */

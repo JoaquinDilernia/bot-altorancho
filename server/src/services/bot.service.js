@@ -1,5 +1,5 @@
 import { generateBotResponse } from './claude.service.js';
-import { getKnowledgeBasePrompt } from './knowledge.service.js';
+import { getKnowledgeBasePrompt, getKnowledgeItemByTitle } from './knowledge.service.js';
 import {
   getOrCreateConversation,
   appendMessage,
@@ -78,6 +78,7 @@ const ENTRY_MENU_SECTIONS = [
       { id: 'menu_order_status', title: 'Estado de pedido', description: 'Consultar en qué está tu pedido' },
       { id: 'menu_order_change', title: 'Cambios y devoluciones', description: 'Cambiar o devolver un producto' },
       { id: 'menu_stock', title: 'Stock y productos', description: 'Consultar disponibilidad' },
+      { id: 'menu_horarios', title: 'Horarios locales', description: 'Días y horarios de atención' },
       { id: 'menu_talk_to_agent', title: 'Hablar con alguien', description: 'Te derivamos con el equipo' },
     ],
   },
@@ -103,6 +104,7 @@ const ORDER_TOPIC_FOLLOWUP = {
 };
 const STOCK_MENU_PROMPT = '¿Qué producto o SKU estás buscando?';
 const TALK_TO_AGENT_PROMPT = '¿Con qué equipo querés hablar?';
+const HORARIOS_FALLBACK = 'No tengo cargados los horarios en este momento. Te recomiendo chequear en https://altorancho.com/ o te derivo con el equipo si preferís.';
 
 function buildDepartmentSections(departments) {
   return [{
@@ -220,6 +222,15 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
     await appendMessage(from, { role: 'assistant', content: STOCK_MENU_PROMPT });
     await sendWhatsAppMessage(from, STOCK_MENU_PROMPT)
       .catch(err => console.error('[bot] Error enviando prompt de stock:', err.message));
+    return true;
+  }
+
+  if (interactiveId === 'menu_horarios') {
+    const content = await getKnowledgeItemByTitle('Horarios locales').catch(() => null);
+    const reply = content?.trim() || HORARIOS_FALLBACK;
+    await appendMessage(from, { role: 'assistant', content: reply });
+    await sendWhatsAppMessage(from, reply)
+      .catch(err => console.error('[bot] Error enviando horarios:', err.message));
     return true;
   }
 
