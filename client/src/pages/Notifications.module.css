@@ -119,6 +119,9 @@
 
 /* ---- Table card ---- */
 .tableCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   margin: var(--space-5) var(--space-8) 0;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -134,6 +137,7 @@
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-alt);
+  flex-shrink: 0;
 }
 
 .selectedCount {
@@ -153,7 +157,12 @@
 }
 
 /* ---- Table ---- */
-.tableWrap { overflow-x: auto; }
+.tableWrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
 
 .table {
   width: 100%;
