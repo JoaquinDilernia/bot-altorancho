@@ -25,6 +25,7 @@ import { seedDepartmentsIfNeeded } from './services/department.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
 import { closeInactiveConversations } from './services/inactivity.service.js';
 import { sendEscalationFollowups } from './services/escalation.service.js';
+import { sendPickupFollowups } from './services/notifications.service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,6 +43,12 @@ cron.schedule('0 * * * *', () => {
 // Escalation followup: every 30min, sends a reminder to clients waiting >2hs without agent response
 cron.schedule('*/30 * * * *', () => {
   sendEscalationFollowups().catch(err => console.error('[cron] escalation followup error:', err));
+});
+
+// Pickup followups: once a day, sends day-3/day-7 reminder templates for
+// orders still pending pickup after the initial notification
+cron.schedule('0 10 * * *', () => {
+  sendPickupFollowups().catch(err => console.error('[cron] pickup followup error:', err));
 });
 
 // Middleware

@@ -28,7 +28,16 @@ export default function Notifications() {
   const [sending, setSending]           = useState(false);
   const [results, setResults]           = useState(null);
 
-  useEffect(() => { loadTemplates(); }, []);
+  // Seguimiento de retiro (recordatorios a día 3 / día 7)
+  const [followupEnabled, setFollowupEnabled] = useState(false);
+  const [day3Template, setDay3Template]       = useState('');
+  const [day3Params, setDay3Params]           = useState(['']);
+  const [day7Template, setDay7Template]       = useState('');
+  const [day7Params, setDay7Params]           = useState(['']);
+  const [followupSaving, setFollowupSaving]   = useState(false);
+  const [followupSaved, setFollowupSaved]     = useState(false);
+
+  useEffect(() => { loadTemplates(); loadFollowupConfig(); }, []);
 
   async function loadTemplates() {
     try {
@@ -37,6 +46,55 @@ export default function Notifications() {
       const approved = (Array.isArray(data) ? data : []).filter(t => t.metaStatus === 'APPROVED');
       setTemplates(approved);
     } catch { /* non-critical */ }
+  }
+
+  async function loadFollowupConfig() {
+    try {
+      const r = await authFetch(BASE_URL + '/api/config');
+      const data = await r.json();
+      const cfg = data.config ?? {};
+      setFollowupEnabled(!!cfg.pickupFollowupEnabled);
+      setDay3Template(cfg.pickupFollowupDay3Template ?? '');
+      setDay3Params(cfg.pickupFollowupDay3Params?.length ? cfg.pickupFollowupDay3Params : ['']);
+      setDay7Template(cfg.pickupFollowupDay7Template ?? '');
+      setDay7Params(cfg.pickupFollowupDay7Params?.length ? cfg.pickupFollowupDay7Params : ['']);
+    } catch { /* non-critical */ }
+  }
+
+  function paramCountForTemplate(name) {
+    const tpl = templates.find(t => t.name === name);
+    const count = (tpl?.bodyText?.match(/\{\{[^}]+\}\}/g) ?? []).length;
+    return Math.max(count, 1);
+  }
+
+  function onDay3TemplateChange(name) {
+    setDay3Template(name);
+    setDay3Params(Array(paramCountForTemplate(name)).fill(''));
+  }
+
+  function onDay7TemplateChange(name) {
+    setDay7Template(name);
+    setDay7Params(Array(paramCountForTemplate(name)).fill(''));
+  }
+
+  async function handleSaveFollowupConfig() {
+    setFollowupSaving(true);
+    try {
+      await authFetch(BASE_URL + '/api/config', {
+        method: 'PUT',
+        body: {
+          pickupFollowupEnabled: followupEnabled,
+          pickupFollowupDay3Template: day3Template,
+          pickupFollowupDay3Params: day3Params.filter(Boolean),
+          pickupFollowupDay7Template: day7Template,
+          pickupFollowupDay7Params: day7Params.filter(Boolean),
+        },
+      });
+      setFollowupSaved(true);
+      setTimeout(() => setFollowupSaved(false), 2500);
+    } finally {
+      setFollowupSaving(false);
+    }
   }
 
   async function fetchOrders() {
@@ -131,6 +189,72 @@ export default function Notifications() {
           <p className={styles.subtitle}>Enviá templates de WhatsApp a pedidos con retiro en local</p>
         </div>
       </header>
+
+      {/* Seguimiento automático de retiro */}
+      <div className={styles.followupCard}>
+        <div className={styles.followupHeader}>
+          <label className={styles.checkLabel}>
+            <input
+              type="checkbox"
+              checked={followupEnabled}
+              onChange={e => setFollowupEnabled(e.target.checked)}
+            />
+            Seguimiento automático de retiro
+          </label>
+          <p className={styles.cardHint}>
+            Si un pedido sigue pendiente de retirar, se le manda un recordatorio a los 3 días y otro a los 7. Se corta solo en cuanto el pedido cambia de estado en TiendaNube.
+          </p>
+        </div>
+
+        {followupEnabled && (
+          <div className={styles.followupGrid}>
+            <div className={styles.followupStage}>
+              <label className={styles.label}>Recordatorio día 3</label>
+              <select className={styles.input} value={day3Template} onChange={e => onDay3TemplateChange(e.target.value)}>
+                <option value="">— Seleccioná un template —</option>
+                {templates.map(t => (
+                  <option key={t.id ?? t.name} value={t.name}>{t.displayName ?? t.name} ({t.language})</option>
+                ))}
+              </select>
+              {day3Template && day3Params.map((p, i) => (
+                <input
+                  key={i}
+                  className={styles.input}
+                  value={p}
+                  onChange={e => setDay3Params(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                  placeholder={`Variable {{${i + 1}}} — ej: {{name}}, {{number}}, texto fijo…`}
+                />
+              ))}
+            </div>
+
+            <div className={styles.followupStage}>
+              <label className={styles.label}>Recordatorio día 7</label>
+              <select className={styles.input} value={day7Template} onChange={e => onDay7TemplateChange(e.target.value)}>
+                <option value="">— Seleccioná un template —</option>
+                {templates.map(t => (
+                  <option key={t.id ?? t.name} value={t.name}>{t.displayName ?? t.name} ({t.language})</option>
+                ))}
+              </select>
+              {day7Template && day7Params.map((p, i) => (
+                <input
+                  key={i}
+                  className={styles.input}
+                  value={p}
+                  onChange={e => setDay7Params(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                  placeholder={`Variable {{${i + 1}}} — ej: {{name}}, {{number}}, texto fijo…`}
+                />
+              ))}
+            </div>
+
+            <div className={styles.followupSaveRow}>
+              <button className={styles.sendBtn} onClick={handleSaveFollowupConfig} disabled={followupSaving}>
+                {followupSaving ? 'Guardando…' : 'Guardar seguimiento'}
+              </button>
+              {followupSaved && <span className={styles.hSent}>✓ Guardado</span>}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Filters */}
       <div className={styles.filtersCard}>

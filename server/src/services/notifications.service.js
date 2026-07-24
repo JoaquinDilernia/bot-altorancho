@@ -1,5 +1,13 @@
 import { getDb } from './firebase.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
+import { getOrderById } from './tiendanube.service.js';
+
+const FOLLOWUP_COLLECTION = 'bot-altorancho_pickup_followups';
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Mismos dos estados que se pueden elegir para el envío inicial (ver
+// STATUS_FILTER_OPTIONS en Notifications.jsx) — si el pedido salió de estos
+// estados ya no está "pendiente de retirar" y no tiene sentido insistir.
+const PENDING_PICKUP_STATUSES = ['unpacked', 'unshipped'];
 
 const TN_BASE = `https://api.tiendanube.com/v1/${process.env.TIENDANUBE_STORE_ID}`;
 const TN_HEADERS = {
@@ -152,7 +160,141 @@ export async function sendBulkOrders({ orders, templateName, languageCode, param
     console.error('[notifications] Firestore log error:', err.message);
   }
 
+  // Esta herramienta se usa únicamente para la notificación de retiro en
+  // local — registrar cada envío exitoso para poder darle seguimiento
+  // (recordatorios a los 3 y 7 días si el pedido sigue pendiente).
+  try {
+    await trackPickupFollowups(orders, results);
+  } catch (err) {
+    console.error('[notifications] Error registrando seguimiento de retiro:', err.message);
+  }
+
   return { results, summary: { sent, errors, skipped } };
+}
+
+async function trackPickupFollowups(orders, results) {
+  const db = getDb();
+  const now = new Date();
+  const batch = db.batch();
+  let any = false;
+
+  for (const order of orders) {
+    const res = results.find(r => r.number === order.number);
+    if (res?.status !== 'sent') continue;
+
+    const ref = db.collection(FOLLOWUP_COLLECTION).doc(String(order.id));
+    batch.set(ref, {
+      orderId: order.id,
+      orderNumber: order.number,
+      phone: order.customer?.phone ?? null,
+      customerName: order.customer?.name ?? null,
+      branch: order.branch ?? null,
+      total: order.total ?? null,
+      initialSentAt: now,
+      followup3SentAt: null,
+      followup7SentAt: null,
+      active: true,
+      updatedAt: now,
+    });
+    any = true;
+  }
+
+  if (any) await batch.commit();
+}
+
+async function sendFollowupTemplate(record, tpl, paramTemplate) {
+  if (!record.phone) throw new Error('Sin teléfono');
+  const bodyParams = (paramTemplate ?? []).map(t =>
+    t
+      .replace('{{name}}',   record.customerName ?? 'Cliente')
+      .replace('{{number}}', String(record.orderNumber))
+      .replace('{{branch}}', record.branch ?? '')
+      .replace('{{total}}',  record.total ?? '')
+  );
+  await sendWhatsAppTemplate(record.phone, tpl.name, tpl.language ?? 'es_AR', bodyParams);
+  console.log(`[notifications] Followup "${tpl.name}" enviado a pedido #${record.orderNumber}`);
+  return true;
+}
+
+/**
+ * Cron diario: para cada pedido al que se le mandó la notificación de retiro,
+ * si sigue pendiente de retirar (no cambió de estado en TiendaNube), manda un
+ * recordatorio a los 3 días y otro a los 7 vía las plantillas configuradas.
+ * Deja de insistir en cuanto el pedido cambia de estado o ya se mandaron
+ * los recordatorios configurados.
+ */
+export async function sendPickupFollowups() {
+  const db = getDb();
+
+  const configDoc = await db.collection('bot-altorancho_config').doc('bot_config').get();
+  const cfg = configDoc.exists ? configDoc.data() : {};
+  if (!cfg.pickupFollowupEnabled) return;
+
+  const day3Template = cfg.pickupFollowupDay3Template || null;
+  const day7Template = cfg.pickupFollowupDay7Template || null;
+  if (!day3Template && !day7Template) return;
+
+  const templatesSnap = await db.collection('bot-altorancho_whatsapp_templates').get();
+  const templatesByName = new Map(templatesSnap.docs.map(d => [d.data().name, d.data()]));
+
+  const snap = await db.collection(FOLLOWUP_COLLECTION).where('active', '==', true).get();
+  if (snap.empty) return;
+
+  const now = Date.now();
+
+  for (const doc of snap.docs) {
+    const data = doc.data();
+    const initialAt = data.initialSentAt?.toDate?.()?.getTime();
+    if (!initialAt) continue;
+
+    const elapsedDays = (now - initialAt) / DAY_MS;
+    const need3 = !!day3Template && !data.followup3SentAt && elapsedDays >= 3;
+    const need7 = !!day7Template && !data.followup7SentAt && elapsedDays >= 7;
+    if (!need3 && !need7) continue;
+
+    let order = null;
+    try {
+      order = await getOrderById(data.orderId);
+    } catch { /* tratamos como no encontrado */ }
+
+    const stillPending = order && PENDING_PICKUP_STATUSES.includes(order.shipping_status);
+    if (!stillPending) {
+      await doc.ref.update({ active: false, updatedAt: new Date() });
+      continue;
+    }
+
+    const updates = { updatedAt: new Date() };
+
+    if (need3) {
+      const tpl = templatesByName.get(day3Template);
+      if (tpl) {
+        try {
+          await sendFollowupTemplate(data, tpl, cfg.pickupFollowupDay3Params);
+          updates.followup3SentAt = new Date();
+        } catch (err) {
+          console.error(`[notifications] Error en followup día 3 de #${data.orderNumber}:`, err.response?.data?.error?.message ?? err.message);
+        }
+      }
+    }
+
+    if (need7) {
+      const tpl = templatesByName.get(day7Template);
+      if (tpl) {
+        try {
+          await sendFollowupTemplate(data, tpl, cfg.pickupFollowupDay7Params);
+          updates.followup7SentAt = new Date();
+        } catch (err) {
+          console.error(`[notifications] Error en followup día 7 de #${data.orderNumber}:`, err.response?.data?.error?.message ?? err.message);
+        }
+      }
+    }
+
+    const has3 = !day3Template || !!updates.followup3SentAt || !!data.followup3SentAt;
+    const has7 = !day7Template || !!updates.followup7SentAt || !!data.followup7SentAt;
+    if (has3 && has7) updates.active = false;
+
+    await doc.ref.update(updates);
+  }
 }
 
 export async function getNotificationHistory() {
