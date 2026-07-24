@@ -26,7 +26,7 @@ export default function Templates() {
   const [error, setError] = useState('');
   const [syncMsg, setSyncMsg] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load().then(handleSync); }, []);
 
   async function load() {
     const r = await authFetch(BASE_URL + '/api/templates');
