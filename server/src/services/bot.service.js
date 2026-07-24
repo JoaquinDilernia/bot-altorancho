@@ -87,9 +87,19 @@ const WEB_LOCAL_BUTTONS = [
   { id: 'web', title: 'Por la web' },
   { id: 'local', title: 'En un local' },
 ];
+// Mensaje de seguimiento tras elegir web/local: depende de AMBAS cosas — el
+// tema (estado/cambio) y el canal ya elegido — para no volver a mencionar la
+// otra opción (ej: si ya dijo "web", no hay que aclarar "o el comprobante si
+// es local", porque ya sabemos que no lo es).
 const ORDER_TOPIC_FOLLOWUP = {
-  order_status: 'Dale, pasame el número de tu pedido (o el comprobante si fue en un local) para chequear el estado.',
-  order_change: 'Perfecto, pasame el número de tu pedido (o el comprobante si fue en un local) para gestionar el cambio.',
+  order_status: {
+    web: 'Dale, pasame el número de tu pedido para chequear el estado.',
+    local: 'Dale, pasame el número de comprobante para chequear el estado.',
+  },
+  order_change: {
+    web: 'Perfecto, pasame el número de tu pedido para gestionar el cambio.',
+    local: 'Perfecto, pasame el número de comprobante para gestionar el cambio.',
+  },
 };
 const STOCK_MENU_PROMPT = '¿Qué producto o SKU estás buscando?';
 const TALK_TO_AGENT_PROMPT = '¿Con qué equipo querés hablar?';
@@ -197,7 +207,8 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
 
   if (interactiveId === 'web' || interactiveId === 'local') {
     const topic = conversation.pendingMenuTopic;
-    const followup = ORDER_TOPIC_FOLLOWUP[topic] ?? ORDER_TOPIC_FOLLOWUP.order_status;
+    const followupByChannel = ORDER_TOPIC_FOLLOWUP[topic] ?? ORDER_TOPIC_FOLLOWUP.order_status;
+    const followup = followupByChannel[interactiveId] ?? followupByChannel.web;
     await setMenuState(from, { pendingMenuTopic: null });
     await appendMessage(from, { role: 'assistant', content: followup });
     await sendWhatsAppMessage(from, followup)
