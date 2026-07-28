@@ -203,6 +203,13 @@ function parseLabelMarkers(text) {
   return { labels, newLabels, cleanText };
 }
 
+// Claude escribe negrita en Markdown estándar (**texto**), pero WhatsApp
+// solo reconoce un asterisco de cada lado (*texto*) — con doble asterisco
+// el cliente ve los asteriscos literales en vez de texto en negrita.
+function toWhatsAppBold(text) {
+  return text.replace(/\*\*(.+?)\*\*/g, '*$1*');
+}
+
 async function sendEntryMenu(to) {
   try {
     const sent = await sendWhatsAppInteractiveList(to, ENTRY_MENU_BODY, ENTRY_MENU_BUTTON_TEXT, ENTRY_MENU_SECTIONS);
@@ -536,7 +543,8 @@ async function processIncomingMessageInternal(msg) {
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
-  const { labels: botLabels, newLabels: botNewLabels, cleanText } = parseLabelMarkers(textAfterClose);
+  const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
+  const cleanText = toWhatsAppBold(textAfterLabels);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
 
