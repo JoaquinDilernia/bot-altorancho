@@ -557,6 +557,33 @@ async function processIncomingMessageInternal(msg) {
     console.log(`[bot] Labels aplicadas a ${from}:`, botLabels);
   }
 
+  // Se manda primero la respuesta del bot (explica la situación / por qué
+  // deriva) y recién después, si corresponde, el aviso automático de
+  // derivación — antes era al revés: el aviso de derivación salía primero
+  // y la explicación de Alto llegaba después, aunque en el historial
+  // guardado quedaban en el orden correcto. Confuso para el cliente.
+  if (channel === 'whatsapp') {
+    if (!cleanText.trim()) {
+      console.warn(`[bot] cleanText vacío para ${from} — no se envía a WPP`);
+    } else {
+      try {
+        console.log(`[bot] Enviando WPP a ${from}: ${cleanText.substring(0, 60)}`);
+        await sendWhatsAppMessage(from, cleanText);
+        console.log(`[bot] WPP enviado OK a ${from}`);
+      } catch (sendErr) {
+        console.error(`[bot] ERROR enviando WPP a ${from}:`, sendErr.response?.data ?? sendErr.message);
+      }
+    }
+  } else if (channel === 'instagram') {
+    if (cleanText.trim()) {
+      try {
+        await sendInstagramMessage(from, cleanText);
+      } catch (sendErr) {
+        console.error(`[bot] ERROR enviando IG a ${from}:`, sendErr.response?.data ?? sendErr.message);
+      }
+    }
+  }
+
   if (shouldEscalate) {
     await dispatchConversation(from, {
       status: 'escalated',
@@ -580,27 +607,6 @@ async function processIncomingMessageInternal(msg) {
   } else if (shouldClose) {
     await updateConversationStatus(from, 'resolved');
     console.log(`[bot] Conversación ${from} resuelta por el bot`);
-  }
-
-  if (channel === 'whatsapp') {
-    if (!cleanText.trim()) {
-      console.warn(`[bot] cleanText vacío para ${from} — no se envía a WPP`);
-      return;
-    }
-    try {
-      console.log(`[bot] Enviando WPP a ${from}: ${cleanText.substring(0, 60)}`);
-      await sendWhatsAppMessage(from, cleanText);
-      console.log(`[bot] WPP enviado OK a ${from}`);
-    } catch (sendErr) {
-      console.error(`[bot] ERROR enviando WPP a ${from}:`, sendErr.response?.data ?? sendErr.message);
-    }
-  } else if (channel === 'instagram') {
-    if (!cleanText.trim()) return;
-    try {
-      await sendInstagramMessage(from, cleanText);
-    } catch (sendErr) {
-      console.error(`[bot] ERROR enviando IG a ${from}:`, sendErr.response?.data ?? sendErr.message);
-    }
   }
 }
 
