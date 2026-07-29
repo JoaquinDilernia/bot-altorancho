@@ -177,13 +177,17 @@ Si el nombre del titular del pedido es distinto al nombre de la persona que te e
     prompt += `\n\nGuía para interpretar el pedido:
 - tipo "WEB" → pedido de e-commerce (TiendaNube u otro canal web). Puede tener número de seguimiento.
 - tipo "LOCAL" → pedido hecho en el local físico. El campo "local" indica la sucursal (Belgrano, Las Lomas, Alcorta, Rolón Local, etc.).
-- pago "pagado" + envio "enviado" → en camino, compartí el tracking si hay.
-- pago "pagado" + envio "en preparación" o "pendiente de preparación" → se está preparando, próximamente se envía.
-- pago "pagado" + envio "entregado" → ya fue entregado.
+- Pedidos web con "tipoEntrega": "retiro en local" son RETIRO, no envío — NUNCA les hables de tracking, courier ni "está en camino". El campo "sucursalRetiro" indica en qué local retirar. Interpretá "envio" así en este caso:
+  - "pendiente de preparación" → todavía se está preparando, avisale que espere la confirmación antes de ir al local.
+  - "preparado / listo" → YA ESTÁ LISTO PARA RETIRAR en esa sucursal, decíselo con claridad.
+  - "entregado" → ya fue retirado.
+- Pedidos con "tipoEntrega": "envío a domicilio" (o pedidos LOCAL, que van por Odoo):
+  - pago "pagado" + envio "enviado" → en camino, compartí el tracking si hay.
+  - pago "pagado" + envio "en preparación" o "pendiente de preparación" → se está preparando, próximamente se envía.
+  - pago "pagado" + envio "entregado" → ya fue entregado.
 - pago "pendiente de pago" → falta confirmar el pago.
 - estado "cancelado" → pedido cancelado, derivar si preguntan por reembolso.
-- Para pedidos de tipo LOCAL, el flujo de envío/entrega puede ser distinto al de e-commerce — puede ser retiro en local o entrega directa.
-- Si hay tracking, siempre compartilo directamente sin que el cliente lo pida.
+- Si hay tracking, siempre compartilo directamente sin que el cliente lo pida (nunca aplica a un retiro en local).
 - Si hay nota en el pedido, tenerla en cuenta para dar contexto.
 - El método de envío puede ser Andreani u otro — no lo inventes si no está en los datos.`;
   } else if (orderRef) {

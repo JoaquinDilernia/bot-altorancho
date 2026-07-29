@@ -74,7 +74,7 @@ client.interceptors.response.use(
   }
 );
 
-const ORDER_FIELDS = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,note,created_at';
+const ORDER_FIELDS = 'id,number,status,payment_status,shipping_status,customer,products,total,shipping_tracking_url,shipping_option,shipping_pickup_type,shipping_pickup_details,note,created_at';
 
 const TN_PAGE_SIZE = 200; // máximo que permite TiendaNube
 
@@ -197,7 +197,7 @@ export async function findOrder(query) {
  */
 export async function findOrdersByEmail(email) {
   try {
-    const fields = 'id,number,status,payment_status,shipping_status,customer,products,total,created_at';
+    const fields = 'id,number,status,payment_status,shipping_status,customer,products,total,created_at,shipping_tracking_url,shipping_option,shipping_pickup_type,shipping_pickup_details';
     const { data } = await client.get('/orders', { params: { q: email, fields, per_page: 5, sort_by: 'created_at', sort_direction: 'desc' } });
     return data ?? [];
   } catch (err) {
@@ -297,6 +297,28 @@ export async function getStoreInfo() {
  * @param {object} order
  * @returns {string}
  */
+// Pedidos con retiro en local: TiendaNube no tiene un campo booleano directo
+// para esto, se identifica por shipping_pickup_type o por el nombre de la
+// opción de envío (los retiros usan "ALTORANCHO {sucursal}").
+const PICKUP_BRANCH_KEYWORDS = ['SAN ISIDRO', 'BELGRANO', 'NORDELTA', 'ALTORANCHO'];
+
+function isPickupOrder(order) {
+  if (order.shipping_pickup_type === 'pickup' || order.shipping_pickup_type === 'ship_to_store') return true;
+  const option = (order.shipping_option ?? '').toUpperCase();
+  const detail = (order.shipping_pickup_details?.name ?? '').toUpperCase();
+  return PICKUP_BRANCH_KEYWORDS.some(k => option.includes(k) || detail.includes(k));
+}
+
+function extractPickupBranch(order) {
+  const option = (order.shipping_option ?? '').toUpperCase();
+  const detail = (order.shipping_pickup_details?.name ?? '').toUpperCase();
+  const combined = `${option} ${detail}`;
+  if (combined.includes('SAN ISIDRO')) return 'San Isidro';
+  if (combined.includes('BELGRANO'))   return 'Belgrano';
+  if (combined.includes('NORDELTA'))   return 'Nordelta';
+  return order.shipping_option || order.shipping_pickup_details?.name || null;
+}
+
 export function formatOrderStatus(order) {
   if (!order) return null;
 
@@ -315,8 +337,11 @@ export function formatOrderStatus(order) {
     abandoned: 'abandonado',
   };
 
+  // "unshipped" faltaba acá — el pedido está armado/listo, pero el bot lo
+  // interpretaba por su cuenta (y le erraba) porque no tenía traducción.
   const shippingMap = {
     unpacked: 'pendiente de preparación',
+    unshipped: 'preparado / listo',
     fulfilling: 'en preparación',
     shipped: 'enviado',
     delivered: 'entregado',
@@ -324,12 +349,18 @@ export function formatOrderStatus(order) {
     returned: 'devuelto',
   };
 
+  const pickup = isPickupOrder(order);
+  const branch = pickup ? extractPickupBranch(order) : null;
+
   return {
     numero: order.number,
     estado: statusMap[order.status] ?? order.status,
     pago: paymentMap[order.payment_status] ?? order.payment_status,
+    tipoEntrega: pickup ? 'retiro en local' : 'envío a domicilio',
+    sucursalRetiro: branch,
     envio: shippingMap[order.shipping_status] ?? order.shipping_status,
-    tracking: order.shipping_tracking_url ?? null,
+    // El tracking de un courier no aplica a un retiro en local
+    tracking: pickup ? null : (order.shipping_tracking_url ?? null),
     total: order.total,
     cliente: order.customer?.name ?? 'Cliente',
     productos: (order.products ?? []).map(p => {
@@ -340,7 +371,9 @@ export function formatOrderStatus(order) {
       return `${label} x${p.quantity ?? 1}`;
     }).join(', ') || null,
     fecha: order.created_at ? new Date(order.created_at).toLocaleDateString('es-AR') : null,
-    metodoEnvio: order.shipping_option?.name ?? null,
+    // shipping_option es un string plano en TiendaNube, no un objeto — en un
+    // retiro contiene el nombre del local, no un método de envío real.
+    metodoEnvio: pickup ? null : (order.shipping_option ?? null),
     nota: order.note ?? null,
   };
 }
