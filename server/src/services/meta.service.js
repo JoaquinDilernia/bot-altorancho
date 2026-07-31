@@ -147,24 +147,6 @@ export async function sendInstagramMessage(recipientId, text) {
   return data.message_id ?? null;
 }
 
-export async function markWhatsAppAsRead(messageId) {
-  if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return;
-  await axios.post(
-    `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
-    {
-      messaging_product: 'whatsapp',
-      status: 'read',
-      message_id: messageId,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-}
-
 export async function downloadMediaAsBase64(mediaId) {
   if (!process.env.META_ACCESS_TOKEN) return null;
   try {

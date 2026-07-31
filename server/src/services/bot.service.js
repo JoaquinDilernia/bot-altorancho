@@ -14,7 +14,7 @@ import {
 } from './conversation.service.js';
 import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts } from './tiendanube.service.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo, findPosOrder, findPosOrdersByContact, formatPosOrder, LOCAL_STORES } from './odoo.service.js';
-import { sendWhatsAppMessage, sendInstagramMessage, markWhatsAppAsRead, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
+import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
 import {
   getOrCreateCustomer,
   enrichCustomerFromTiendaNube,
@@ -329,11 +329,7 @@ export function processIncomingMessage(msg) {
 }
 
 async function processIncomingMessageInternal(msg) {
-  const { channel, from, messageId, text, type, mediaId, mediaUrl, contactName } = msg;
-
-  if (channel === 'whatsapp' && messageId) {
-    markWhatsAppAsRead(messageId).catch(() => {});
-  }
+  const { channel, from, text, type, mediaId, mediaUrl, contactName } = msg;
 
   let conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments;
   try {
