@@ -90,7 +90,7 @@ app.use('/api/quick-replies', requireAuth, requireAtLeastAtencionCliente, quickR
 app.use('/api/templates',     requireAuth, requireAtLeastAtencionCliente, templateRoutes);
 app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsRoutes);
 app.use('/api/departments',   requireAuth, requireAtLeastAtencionCliente, departmentRoutes);
-app.use('/api/notifications',  requireAuth, requireAtLeastAtencionCliente, notificationsRoutes);
+app.use('/api/notifications',  requireAuth, notificationsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
