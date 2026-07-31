@@ -127,6 +127,26 @@ function MsgStatusIcon({ msgStatus }) {
   return null;
 }
 
+async function downloadMedia(url, suggestedExt = 'jpg') {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const ext = blob.type?.split('/')[1]?.split('+')[0] || suggestedExt;
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `imagen-${Date.now()}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    // Si falla la descarga directa, al menos se puede guardar desde la
+    // pestaña abierta con clic derecho → Guardar imagen como.
+    window.open(url, '_blank');
+  }
+}
+
 function MessageBubble({ msg, onRetry }) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
@@ -135,12 +155,37 @@ function MessageBubble({ msg, onRetry }) {
     ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}`
     : null;
   const isError = isAdmin && msg.msgStatus === 'error';
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   return (
     <div className={`${styles.msg} ${isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot}`}>
       <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''}`}>
         {msg.mediaType === 'image' && mediaProxyUrl && (
-          <img src={mediaProxyUrl} className={styles.msgMedia} alt="Imagen" loading="lazy" />
+          <>
+            <img
+              src={mediaProxyUrl}
+              className={styles.msgMedia}
+              alt="Imagen"
+              loading="lazy"
+              onClick={() => setLightboxOpen(true)}
+              title="Ver imagen"
+            />
+            {lightboxOpen && (
+              <div className={styles.lightboxOverlay} onClick={() => setLightboxOpen(false)}>
+                <div className={styles.lightboxContent} onClick={e => e.stopPropagation()}>
+                  <img src={mediaProxyUrl} className={styles.lightboxImg} alt="Imagen ampliada" />
+                  <div className={styles.lightboxActions}>
+                    <button type="button" className={styles.lightboxBtn} onClick={() => downloadMedia(mediaProxyUrl)}>
+                      ⬇ Descargar
+                    </button>
+                    <button type="button" className={styles.lightboxBtn} onClick={() => setLightboxOpen(false)}>
+                      ✕ Cerrar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
         {msg.mediaType === 'audio' && mediaProxyUrl && (
           <audio controls src={mediaProxyUrl} className={styles.msgAudio} />
