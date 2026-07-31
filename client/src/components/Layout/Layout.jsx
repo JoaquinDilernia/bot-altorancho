@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import styles from './Layout.module.css';
+
+const COLLAPSED_KEY = 'altorancho_sidebar_collapsed';
 
 function PageLoader() {
   return (
@@ -47,6 +49,11 @@ export default function Layout() {
   const { agent, logout } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === '1');
+
+  useEffect(() => {
+    localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+  }, [collapsed]);
 
   function closeMenu() { setMenuOpen(false); }
 
@@ -63,7 +70,7 @@ export default function Layout() {
       {/* Backdrop */}
       {menuOpen && <div className={styles.overlay} onClick={closeMenu} />}
 
-      <aside className={`${styles.sidebar} ${menuOpen ? styles.sidebarOpen : ''}`}>
+      <aside className={`${styles.sidebar} ${menuOpen ? styles.sidebarOpen : ''} ${collapsed ? styles.sidebarCollapsed : ''}`}>
         <div className={styles.brand}>
           <div className={styles.brandLogo}>A</div>
           <div className={styles.brandText}>
@@ -72,28 +79,38 @@ export default function Layout() {
           </div>
         </div>
 
+        <button
+          className={styles.collapseBtn}
+          onClick={() => setCollapsed(v => !v)}
+          aria-label={collapsed ? 'Expandir menú' : 'Colapsar menú'}
+          title={collapsed ? 'Expandir menú' : 'Colapsar menú'}
+        >
+          {collapsed ? '»' : '«'}
+        </button>
+
         <nav className={styles.nav}>
           {NAV_ITEMS.filter(item => canAccess(agent?.role, item.minRole)).map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               onClick={closeMenu}
+              title={collapsed ? label : undefined}
               className={({ isActive }) =>
                 `${styles.navItem} ${isActive ? styles.navItemActive : ''}`
               }
             >
               <Icon className={styles.navIcon} />
-              <span>{label}</span>
+              <span className={styles.navLabel}>{label}</span>
             </NavLink>
           ))}
         </nav>
 
         <div className={styles.sidebarFooter}>
-          <button className={styles.agentInfo} onClick={() => { navigate('/profile'); closeMenu(); }}>
+          <button className={styles.agentInfo} onClick={() => { navigate('/profile'); closeMenu(); }} title={collapsed ? (agent?.name ?? 'Agente') : undefined}>
             <div className={styles.statusDot} />
             <span className={styles.agentName}>{agent?.name ?? 'Agente'}</span>
           </button>
-          <button className={styles.logoutBtn} onClick={logout}>Salir</button>
+          <button className={styles.logoutBtn} onClick={logout} title="Salir">Salir</button>
         </div>
       </aside>
 
