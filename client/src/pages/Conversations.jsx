@@ -1077,6 +1077,8 @@ export default function Conversations() {
                       onChange={e => setReply(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(e); } }}
                       disabled={sending}
+                      spellCheck="true"
+                      lang="es"
                     />
                     {quickReplies.length > 0 && (
                       <div className={styles.qrWrap}>
