@@ -2,23 +2,6 @@ import { useEffect, useRef } from 'react';
 
 const APP_TITLE = 'Alto Rancho';
 
-function playBeep(type = 'normal') {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    // Higher pitch for agent conversations, lower for bot
-    osc.frequency.value = type === 'agent' ? 1047 : 880;
-    osc.type = 'sine';
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.25);
-  } catch { /* audio not available */ }
-}
-
 export function useNotifications(conversations) {
   const prevRef = useRef(null);
 
@@ -56,7 +39,6 @@ export function useNotifications(conversations) {
         const notifTitle = isAgent
           ? `Nueva derivación — ${conv.contactName || 'Cliente'}`
           : `Nuevo mensaje (Bot) — ${conv.contactName || 'Cliente'}`;
-        playBeep(isAgent ? 'agent' : 'normal');
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
           new Notification(notifTitle, {
             body: conv.lastMessage || 'Nuevo mensaje recibido',
@@ -86,7 +68,6 @@ export function useNotifications(conversations) {
         title = `🤖 Bot — ${title}`;
       }
 
-      playBeep(isAgentConv || isUrgent ? 'agent' : 'normal');
       if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         new Notification(title, {
           body,
