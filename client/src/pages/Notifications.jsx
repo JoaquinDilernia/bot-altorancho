@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Notifications.module.css';
 
@@ -15,16 +15,20 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'unshipped', label: 'Armado / Listo para retirar' },
 ];
 
+// Orden preferido de sucursales en el acordeón — cualquier otra que aparezca
+// en los datos (ej: Nordelta) se agrega al final, no se pierde.
+const BRANCH_ORDER = ['Belgrano', 'San Isidro', 'Alcorta'];
+
 export default function Notifications() {
   const [orders, setOrders]             = useState([]);
   const [templates, setTemplates]       = useState([]);
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
   const [statuses, setStatuses]         = useState(['unpacked', 'unshipped']);
-  const [branchFilter, setBranchFilter] = useState('');
+  const [openBranches, setOpenBranches] = useState(new Set());
   const [selected, setSelected]         = useState(new Set());
   const [templateName, setTemplateName] = useState('');
-  const [paramTemplate, setParamTemplate] = useState(['']);
+  const [paramTemplate, setParamTemplate] = useState(['{{number}}']);
   const [sending, setSending]           = useState(false);
   const [results, setResults]           = useState(null);
 
@@ -37,7 +41,7 @@ export default function Notifications() {
   const [followupSaving, setFollowupSaving]   = useState(false);
   const [followupSaved, setFollowupSaved]     = useState(false);
 
-  useEffect(() => { loadTemplates(); loadFollowupConfig(); }, []);
+  useEffect(() => { loadTemplates(); loadFollowupConfig(); fetchOrders(); }, []);
 
   async function loadTemplates() {
     try {
@@ -114,14 +118,39 @@ export default function Notifications() {
     }
   }
 
-  const filtered = orders.filter(o => {
-    if (statuses.length && !statuses.includes(o.shippingStatus)) return false;
-    if (branchFilter && !o.branch?.toLowerCase().includes(branchFilter.toLowerCase())) return false;
-    return true;
-  });
+  const filteredByStatus = useMemo(
+    () => orders.filter(o => !statuses.length || statuses.includes(o.shippingStatus)),
+    [orders, statuses]
+  );
+
+  const branchGroups = useMemo(() => {
+    const groups = new Map();
+    for (const o of filteredByStatus) {
+      const branch = o.branch || 'Sucursal';
+      if (!groups.has(branch)) groups.set(branch, []);
+      groups.get(branch).push(o);
+    }
+    const names = [...groups.keys()].sort((a, b) => {
+      const ia = BRANCH_ORDER.indexOf(a);
+      const ib = BRANCH_ORDER.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+    return names.map(name => ({ name, orders: groups.get(name) }));
+  }, [filteredByStatus]);
 
   function toggleStatus(s) {
     setStatuses(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
+  }
+
+  function toggleBranchOpen(name) {
+    setOpenBranches(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
   }
 
   function toggleOrder(id) {
@@ -132,12 +161,14 @@ export default function Notifications() {
     });
   }
 
-  function toggleAll() {
-    if (selected.size === filtered.length && filtered.length > 0) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(filtered.map(o => o.id)));
-    }
+  function toggleBranchAll(branchOrders) {
+    const ids = branchOrders.map(o => o.id);
+    const allSelected = ids.length > 0 && ids.every(id => selected.has(id));
+    setSelected(prev => {
+      const next = new Set(prev);
+      ids.forEach(id => allSelected ? next.delete(id) : next.add(id));
+      return next;
+    });
   }
 
   function onTemplateChange(name) {
@@ -157,7 +188,7 @@ export default function Notifications() {
     const tpl = templates.find(t => t.name === templateName);
     if (!tpl) return;
 
-    const ordersToSend = filtered.filter(o => selected.has(o.id));
+    const ordersToSend = filteredByStatus.filter(o => selected.has(o.id));
     setSending(true);
     setResults(null);
     setError('');
@@ -190,6 +221,9 @@ export default function Notifications() {
           <h1 className={styles.title}>Notificaciones masivas</h1>
           <p className={styles.subtitle}>Enviá templates de WhatsApp a pedidos con retiro en local</p>
         </div>
+        <button className={styles.btnFetch} onClick={fetchOrders} disabled={loading}>
+          {loading ? 'Actualizando…' : '↻ Actualizar'}
+        </button>
       </header>
 
       {/* Seguimiento automático de retiro */}
@@ -258,190 +292,189 @@ export default function Notifications() {
         )}
       </div>
 
-      {/* Filters */}
-      <div className={styles.filtersCard}>
-        <div className={styles.filtersRow}>
-          <div className={styles.filterGroup}>
-            <label className={styles.filterLabel}>Estado del envío</label>
-            <div className={styles.checkRow}>
-              {STATUS_FILTER_OPTIONS.map(s => (
-                <label key={s.value} className={styles.checkLabel}>
-                  <input
-                    type="checkbox"
-                    checked={statuses.includes(s.value)}
-                    onChange={() => toggleStatus(s.value)}
-                  />
-                  {s.label}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className={styles.filterGroup}>
-            <label className={styles.filterLabel}>Filtrar por sucursal</label>
-            <input
-              className={styles.filterInput}
-              value={branchFilter}
-              onChange={e => setBranchFilter(e.target.value)}
-              placeholder="Belgrano, San Isidro, Nordelta…"
-            />
-          </div>
-          <button className={styles.btnFetch} onClick={fetchOrders} disabled={loading}>
-            {loading ? 'Cargando…' : 'Buscar pedidos'}
-          </button>
+      {/* Estado del envío */}
+      <div className={styles.statusFilterRow}>
+        <span className={styles.filterLabel}>Estado del envío</span>
+        <div className={styles.checkRow}>
+          {STATUS_FILTER_OPTIONS.map(s => (
+            <label key={s.value} className={styles.checkLabel}>
+              <input
+                type="checkbox"
+                checked={statuses.includes(s.value)}
+                onChange={() => toggleStatus(s.value)}
+              />
+              {s.label}
+            </label>
+          ))}
         </div>
         {error && <div className={styles.errorBanner}>{error}</div>}
       </div>
 
-      {orders.length > 0 && (
-        <>
-          {/* Orders table */}
-          <div className={styles.tableCard}>
-            <div className={styles.tableToolbar}>
-              <label className={styles.checkLabel}>
-                <input
-                  type="checkbox"
-                  checked={filtered.length > 0 && selected.size === filtered.length}
-                  onChange={toggleAll}
-                />
-                Seleccionar todos ({filtered.length})
-              </label>
-              {selected.size > 0 && (
-                <span className={styles.selectedCount}>{selected.size} seleccionado{selected.size > 1 ? 's' : ''}</span>
-              )}
-            </div>
-
-            {filtered.length === 0 ? (
-              <p className={styles.emptyFilter}>Ningún pedido coincide con los filtros actuales.</p>
-            ) : (
-              <div className={styles.tableWrap}>
-                <table className={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={{ width: 32 }}></th>
-                      <th>Pedido</th>
-                      <th>Cliente</th>
-                      <th>Teléfono</th>
-                      <th>Sucursal</th>
-                      <th>Estado</th>
-                      <th>Total</th>
-                      <th>Resultado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map(o => {
-                      const res = results?.results?.find(r => r.number === o.number);
-                      return (
-                        <tr
-                          key={o.id}
-                          className={`${selected.has(o.id) ? styles.rowSelected : ''} ${res ? styles[`row_${res.status}`] : ''}`}
-                          onClick={() => toggleOrder(o.id)}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <td onClick={e => e.stopPropagation()}>
-                            <input type="checkbox" checked={selected.has(o.id)} onChange={() => toggleOrder(o.id)} />
-                          </td>
-                          <td className={styles.orderNum}>#{o.number}</td>
-                          <td>{o.customer.name}</td>
-                          <td className={styles.phone}>
-                            {o.customer.phone
-                              ? <span className={styles.phoneOk}>{o.customer.phone}</span>
-                              : <span className={styles.phoneMissing}>Sin tel.</span>
-                            }
-                          </td>
-                          <td className={styles.branch}>{o.branch}</td>
-                          <td>
-                            <span className={`${styles.statusChip} ${styles[`chip_${o.shippingStatus}`]}`}>
-                              {STATUS_LABELS[o.shippingStatus] ?? o.shippingStatus}
-                            </span>
-                          </td>
-                          <td className={styles.total}>${o.total}</td>
-                          <td>
-                            {res && (
-                              <span className={`${styles.resultBadge} ${styles[`result_${res.status}`]}`}>
-                                {res.status === 'sent' ? '✓ Enviado' : res.status === 'skipped' ? '— Omitido' : `✗ ${res.reason}`}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+      {/* Acordeón por sucursal */}
+      <div className={styles.branchArea}>
+        {loading ? (
+          <p className={styles.emptyFilter}>Cargando pedidos…</p>
+        ) : branchGroups.length === 0 ? (
+          <div className={styles.emptyState}>
+            <span className={styles.emptyIcon}>📦</span>
+            <p>No hay pedidos con retiro pendiente en este momento.</p>
           </div>
+        ) : (
+          branchGroups.map(({ name, orders: branchOrders }) => {
+            const isOpen = openBranches.has(name);
+            const selectedInBranch = branchOrders.filter(o => selected.has(o.id)).length;
+            return (
+              <div key={name} className={styles.branchSection}>
+                <button
+                  className={styles.branchHeader}
+                  onClick={() => toggleBranchOpen(name)}
+                  aria-expanded={isOpen}
+                >
+                  <span className={styles.branchChevron}>{isOpen ? '▾' : '▸'}</span>
+                  <span className={styles.branchName}>{name}</span>
+                  <span className={styles.branchCount}>{branchOrders.length}</span>
+                  {selectedInBranch > 0 && (
+                    <span className={styles.selectedCount}>{selectedInBranch} seleccionado{selectedInBranch > 1 ? 's' : ''}</span>
+                  )}
+                </button>
 
-          {/* Send panel */}
-          {selected.size > 0 && (
-            <div className={styles.sendPanel}>
-              <h3 className={styles.sendTitle}>Enviar a {selected.size} pedido{selected.size > 1 ? 's' : ''}</h3>
-
-              <div className={styles.field}>
-                <label className={styles.label}>Template aprobado</label>
-                {templates.length === 0 ? (
-                  <p className={styles.cardHint}>No hay templates aprobados. Creá uno en la sección Plantillas y esperá la aprobación de Meta.</p>
-                ) : (
-                  <select className={styles.input} value={templateName} onChange={e => onTemplateChange(e.target.value)}>
-                    <option value="">— Seleccioná un template —</option>
-                    {templates.map(t => (
-                      <option key={t.id ?? t.name} value={t.name}>{t.displayName ?? t.name} ({t.language})</option>
-                    ))}
-                  </select>
+                {isOpen && (
+                  <div className={styles.branchBody}>
+                    <div className={styles.tableToolbar}>
+                      <label className={styles.checkLabel}>
+                        <input
+                          type="checkbox"
+                          checked={branchOrders.length > 0 && branchOrders.every(o => selected.has(o.id))}
+                          onChange={() => toggleBranchAll(branchOrders)}
+                        />
+                        Seleccionar todos en {name}
+                      </label>
+                    </div>
+                    <div className={styles.tableWrap}>
+                      <table className={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={{ width: 32 }}></th>
+                            <th>Pedido</th>
+                            <th>Cliente</th>
+                            <th>Teléfono</th>
+                            <th>Estado</th>
+                            <th>Total</th>
+                            <th>Resultado</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {branchOrders.map(o => {
+                            const res = results?.results?.find(r => r.number === o.number);
+                            return (
+                              <tr
+                                key={o.id}
+                                className={`${selected.has(o.id) ? styles.rowSelected : ''} ${res ? styles[`row_${res.status}`] : ''}`}
+                                onClick={() => toggleOrder(o.id)}
+                                style={{ cursor: 'pointer' }}
+                              >
+                                <td onClick={e => e.stopPropagation()}>
+                                  <input type="checkbox" checked={selected.has(o.id)} onChange={() => toggleOrder(o.id)} />
+                                </td>
+                                <td className={styles.orderNum}>#{o.number}</td>
+                                <td>{o.customer.name}</td>
+                                <td className={styles.phone}>
+                                  {o.customer.phone
+                                    ? <span className={styles.phoneOk}>{o.customer.phone}</span>
+                                    : <span className={styles.phoneMissing}>Sin tel.</span>
+                                  }
+                                </td>
+                                <td>
+                                  <span className={`${styles.statusChip} ${styles[`chip_${o.shippingStatus}`]}`}>
+                                    {STATUS_LABELS[o.shippingStatus] ?? o.shippingStatus}
+                                  </span>
+                                </td>
+                                <td className={styles.total}>${o.total}</td>
+                                <td>
+                                  {res && (
+                                    <span className={`${styles.resultBadge} ${styles[`result_${res.status}`]}`}>
+                                      {res.status === 'sent' ? '✓ Enviado' : res.status === 'skipped' ? '— Omitido' : `✗ ${res.reason}`}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 )}
               </div>
+            );
+          })
+        )}
+      </div>
 
-              {tplBody && (
-                <div className={styles.previewBox}>
-                  <div className={styles.previewLabel}>Vista previa del cuerpo</div>
-                  <p className={styles.previewText}>{tplBody}</p>
-                </div>
-              )}
+      {/* Barra de envío — siempre presente, no empuja ni achica el resto al seleccionar */}
+      <div className={styles.sendBar}>
+        {selected.size === 0 ? (
+          <p className={styles.sendBarHint}>Seleccioná uno o más pedidos (de cualquier sucursal) para notificar.</p>
+        ) : (
+          <div className={styles.sendBarActive}>
+            <div className={styles.sendBarRow}>
+              <span className={styles.sendTitle}>Enviar a {selected.size} pedido{selected.size > 1 ? 's' : ''}</span>
 
-              {paramTemplate.length > 0 && templateName && (
-                <div className={styles.paramsGrid}>
-                  <p className={styles.cardHint}>
-                    Completá los valores de las variables. Podés usar: <code>{'{{name}}'}</code>, <code>{'{{number}}'}</code>, <code>{'{{branch}}'}</code>, <code>{'{{total}}'}</code> — o un texto fijo.
-                  </p>
-                  {paramTemplate.map((p, i) => (
-                    <div key={i} className={styles.field}>
-                      <label className={styles.label}>{`Variable {{${i + 1}}}`}</label>
-                      <input
-                        className={styles.input}
-                        value={p}
-                        onChange={e => setParamTemplate(prev => prev.map((v, j) => j === i ? e.target.value : v))}
-                        placeholder={`ej: {{name}}, {{number}}, texto fijo…`}
-                      />
-                    </div>
+              {templates.length === 0 ? (
+                <p className={styles.cardHint}>No hay templates aprobados. Creá uno en la sección Plantillas y esperá la aprobación de Meta.</p>
+              ) : (
+                <select className={styles.input} value={templateName} onChange={e => onTemplateChange(e.target.value)}>
+                  <option value="">— Seleccioná un template —</option>
+                  {templates.map(t => (
+                    <option key={t.id ?? t.name} value={t.name}>{t.displayName ?? t.name} ({t.language})</option>
                   ))}
-                </div>
-              )}
-
-              {results && (
-                <div className={styles.resultSummary}>
-                  <span className={styles.hSent}>✓ {results.summary.sent} enviados</span>
-                  {results.summary.errors > 0 && <span className={styles.hFailed}>✗ {results.summary.errors} errores</span>}
-                  {results.summary.skipped > 0 && <span className={styles.hSkipped}>— {results.summary.skipped} sin teléfono</span>}
-                </div>
+                </select>
               )}
 
               <button className={styles.sendBtn} onClick={handleSend} disabled={sending || !templateName}>
                 {sending
-                  ? `Enviando (${selected.size} mensajes)…`
-                  : `Enviar ${selected.size} mensaje${selected.size > 1 ? 's' : ''} por WhatsApp`
+                  ? `Enviando (${selected.size})…`
+                  : `Enviar ${selected.size} mensaje${selected.size > 1 ? 's' : ''}`
                 }
               </button>
             </div>
-          )}
-        </>
-      )}
 
-      {!loading && orders.length === 0 && (
-        <div className={styles.emptyState}>
-          <span className={styles.emptyIcon}>📦</span>
-          <p>Hacé clic en "Buscar pedidos" para cargar los retiros pendientes.</p>
-          <p className={styles.cardHint}>Se detectan pedidos con retiro en local por tipo de envío o nombre de sucursal.</p>
-        </div>
-      )}
+            {tplBody && (
+              <div className={styles.previewBox}>
+                <div className={styles.previewLabel}>Vista previa del cuerpo</div>
+                <p className={styles.previewText}>{tplBody}</p>
+              </div>
+            )}
+
+            {paramTemplate.length > 0 && templateName && (
+              <div className={styles.paramsGrid}>
+                <p className={styles.cardHint}>
+                  Completá los valores de las variables. Podés usar: <code>{'{{name}}'}</code>, <code>{'{{number}}'}</code>, <code>{'{{branch}}'}</code>, <code>{'{{total}}'}</code> — o un texto fijo.
+                </p>
+                {paramTemplate.map((p, i) => (
+                  <div key={i} className={styles.field}>
+                    <label className={styles.label}>{`Variable {{${i + 1}}}`}</label>
+                    <input
+                      className={styles.input}
+                      value={p}
+                      onChange={e => setParamTemplate(prev => prev.map((v, j) => j === i ? e.target.value : v))}
+                      placeholder={`ej: {{name}}, {{number}}, texto fijo…`}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {results && (
+              <div className={styles.resultSummary}>
+                <span className={styles.hSent}>✓ {results.summary.sent} enviados</span>
+                {results.summary.errors > 0 && <span className={styles.hFailed}>✗ {results.summary.errors} errores</span>}
+                {results.summary.skipped > 0 && <span className={styles.hSkipped}>— {results.summary.skipped} sin teléfono</span>}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

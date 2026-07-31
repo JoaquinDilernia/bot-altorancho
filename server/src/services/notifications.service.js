@@ -18,7 +18,7 @@ const TN_HEADERS = {
 const PICKUP_FIELDS = 'id,number,status,payment_status,shipping_status,shipping_pickup_type,shipping_option,shipping_pickup_details,customer,total,created_at';
 
 // Branch keywords from the actual TiendaNube shipping option names
-const BRANCH_KEYWORDS = ['SAN ISIDRO', 'BELGRANO', 'NORDELTA', 'ALTORANCHO'];
+const BRANCH_KEYWORDS = ['SAN ISIDRO', 'BELGRANO', 'ALCORTA', 'NORDELTA', 'ALTORANCHO'];
 
 function normalizePhone(raw) {
   if (!raw) return null;
@@ -45,6 +45,7 @@ function extractBranch(order) {
   const combined = `${option} ${detail}`;
   if (combined.includes('SAN ISIDRO')) return 'San Isidro';
   if (combined.includes('BELGRANO'))   return 'Belgrano';
+  if (combined.includes('ALCORTA'))    return 'Alcorta';
   if (combined.includes('NORDELTA'))   return 'Nordelta';
   // Fallback: return the raw option name so it's still readable
   return order.shipping_option || order.shipping_pickup_details?.name || 'Sucursal';
