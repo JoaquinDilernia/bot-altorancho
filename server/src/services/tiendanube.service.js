@@ -154,8 +154,8 @@ export async function findOrder(query) {
     const diff = latestNum - targetNum;
     const estimatedPage = Math.max(1, Math.ceil(diff / TN_PAGE_SIZE));
 
-    // Buscar en página estimada ± 2 en paralelo (incluyendo página 1 para pedidos recientes)
-    const pages = [estimatedPage - 1, estimatedPage, estimatedPage + 1, estimatedPage + 2]
+    // Buscar en página estimada ± 3 en paralelo (incluyendo página 1 para pedidos recientes)
+    const pages = [estimatedPage - 1, estimatedPage, estimatedPage + 1, estimatedPage + 2, estimatedPage + 3]
       .filter(p => p >= 1);
 
     console.log(`[tiendanube] findOrder #${num}: q= sin resultados, buscando via paginación (último:#${latestNum}, diff:${diff}, páginas:${pages.join(',')})`);
@@ -164,7 +164,14 @@ export async function findOrder(query) {
       pages.map(p =>
         client.get('/orders', { params: { page: p, per_page: TN_PAGE_SIZE, fields: ORDER_FIELDS } })
           .then(r => r.data ?? [])
-          .catch(() => [])
+          .catch(err => {
+            // Si esta página falla incluso después de todos los reintentos (alto
+            // tráfico simultáneo), antes quedaba como "vacía" sin dejar rastro —
+            // si justo el pedido buscado vivía ahí, el resultado era un falso
+            // "no encontrado" indistinguible de que el pedido realmente no está.
+            console.error(`[tiendanube] findOrder #${num}: falló la página ${p} tras reintentos:`, err.message);
+            return [];
+          })
       )
     );
 
