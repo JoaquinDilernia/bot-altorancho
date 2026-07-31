@@ -153,6 +153,10 @@ router.get('/', async (req, res) => {
       .sort((a, b) => b.count - a.count)
       .slice(0, 8);
 
+    // Las conversaciones derivadas a un departamento (sin asignar todavía a
+    // una persona puntual) ya se cuentan en "Por departamento" — antes acá
+    // se agregaba una fila extra "{depto} (depto.)" con el mismo número,
+    // que se veía como un agente fantasma duplicado.
     const byAgent = [
       { id: 'bot', name: 'Bot (Asistente)', ...agentBuckets['bot'] },
       ...agents.map(a => ({
@@ -160,13 +164,6 @@ router.get('/', async (req, res) => {
         name: a.name ?? a.email,
         ...(agentBuckets[a.email] ?? { handled: 0, resolved: 0 }),
       })),
-      ...departments
-        .filter(dep => agentBuckets[dep.id]?.handled > 0)
-        .map(dep => ({
-          id: dep.id,
-          name: `${dep.name} (depto.)`,
-          ...agentBuckets[dep.id],
-        })),
     ];
 
     const byDepartment = departments
