@@ -191,7 +191,10 @@ Si el nombre del titular del pedido es distinto al nombre de la persona que te e
 - Si hay nota en el pedido, tenerla en cuenta para dar contexto.
 - El método de envío puede ser Andreani u otro — no lo inventes si no está en los datos.`;
   } else if (orderRef) {
-    prompt += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en TiendaNube y Odoo AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste y seguí el protocolo de la REGLA CRÍTICA SOBRE PEDIDOS (preguntar si es web/local, pedir comprobante, y como último recurso el email).`;
+    prompt += `\n\n--- BÚSQUEDA DE PEDIDO "#${orderRef}" ---\nSe intentó buscar este pedido en TiendaNube y Odoo AHORA MISMO y NO se encontró ningún resultado. No existe. No inventes un número, fecha, cliente o producto alternativo por más que "te suene" a algo — decile honestamente al cliente que no lo encontraste. Preguntale si la compra fue por la web o en un local:
+- Si es por la web, pedile que confirme bien el número de pedido (o el email de la compra como alternativa).
+- Si es en un local, preguntale CUÁL (Belgrano, Las Lomas o Alcorta) y pedile el número de comprobante — nunca le digas que el número "empieza con S" ni ninguna otra regla de formato, los comprobantes de local no siguen ese patrón.
+- Como último recurso, pedile el email para buscar por ahí.`;
   }
   if (stockInfo) {
     prompt += `\n\n--- STOCK EN SUCURSALES ---\n${stockInfo}`;
