@@ -69,12 +69,12 @@ export default function Notifications() {
 
   function onDay3TemplateChange(name) {
     setDay3Template(name);
-    setDay3Params(Array(paramCountForTemplate(name)).fill(''));
+    setDay3Params(Array.from({ length: paramCountForTemplate(name) }, (_, i) => i === 0 ? '{{number}}' : ''));
   }
 
   function onDay7TemplateChange(name) {
     setDay7Template(name);
-    setDay7Params(Array(paramCountForTemplate(name)).fill(''));
+    setDay7Params(Array.from({ length: paramCountForTemplate(name) }, (_, i) => i === 0 ? '{{number}}' : ''));
   }
 
   async function handleSaveFollowupConfig() {
@@ -143,9 +143,11 @@ export default function Notifications() {
   function onTemplateChange(name) {
     setTemplateName(name);
     const tpl = templates.find(t => t.name === name);
-    if (!tpl) { setParamTemplate(['']); return; }
+    if (!tpl) { setParamTemplate(['{{number}}']); return; }
     const count = (tpl.bodyText?.match(/\{\{[^}]+\}\}/g) ?? []).length;
-    setParamTemplate(Array(Math.max(count, 1)).fill(''));
+    // Siempre es 1 sola variable — el número de pedido — así que se
+    // autocompleta en vez de dejarla vacía para que la carguen a mano.
+    setParamTemplate(Array.from({ length: Math.max(count, 1) }, (_, i) => i === 0 ? '{{number}}' : ''));
   }
 
   async function handleSend() {
