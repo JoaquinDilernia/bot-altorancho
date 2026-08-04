@@ -1297,6 +1297,41 @@
   display: block;
 }
 
+.msgDocument {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  max-width: 260px;
+}
+
+.msgDocumentIcon { font-size: var(--font-size-lg); flex-shrink: 0; }
+
+.msgDocumentOpen {
+  flex: 1;
+  color: var(--color-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+.msgDocumentOpen:hover { text-decoration: underline; }
+
+.msgDocumentDownload {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+}
+.msgDocumentDownload:hover { background: var(--color-surface); color: var(--color-text); }
+
 /* ---- Media send button ---- */
 .mediaFileInput {
   display: none;

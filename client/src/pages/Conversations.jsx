@@ -193,6 +193,17 @@ function MessageBubble({ msg, onRetry }) {
         {msg.mediaType === 'video' && mediaProxyUrl && (
           <video controls src={mediaProxyUrl} className={styles.msgVideo} />
         )}
+        {msg.mediaType === 'document' && mediaProxyUrl && (
+          <div className={styles.msgDocument}>
+            <span className={styles.msgDocumentIcon}>📄</span>
+            <a href={mediaProxyUrl} target="_blank" rel="noopener noreferrer" className={styles.msgDocumentOpen}>
+              Abrir archivo
+            </a>
+            <button type="button" className={styles.msgDocumentDownload} onClick={() => downloadMedia(mediaProxyUrl, 'pdf')} title="Descargar">
+              ⬇
+            </button>
+          </div>
+        )}
         {msg.content && <span>{msg.content}</span>}
         {onRetry && (
           <button type="button" className={styles.retryBtn} onClick={() => onRetry(msg.content)}>

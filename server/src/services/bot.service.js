@@ -447,7 +447,9 @@ async function processIncomingMessageInternal(msg) {
 
   if (type === 'document') {
     const reply = 'Recibí un archivo, pero no puedo procesarlo directamente. ¿Podés contarme por escrito en qué te ayudo?';
-    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', contactName });
+    // mediaId se guardaba acá antes — sin él, el archivo (ej: un PDF) quedaba
+    // imposible de ver o descargar después desde el panel.
+    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', mediaType: 'document', mediaId: mediaId ?? null, contactName });
     await appendMessage(from, { role: 'assistant', content: reply });
     if (channel === 'whatsapp') await sendWhatsAppMessage(from, reply);
     else if (channel === 'instagram') await sendInstagramMessage(from, reply);
