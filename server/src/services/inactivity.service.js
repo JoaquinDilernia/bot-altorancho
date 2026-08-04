@@ -16,37 +16,67 @@ export async function closeInactiveConversations() {
   const cutoff = new Date();
   cutoff.setHours(cutoff.getHours() - inactiveHours);
 
-  // Only close active bot conversations (not already archived, not in human mode)
-  const snap = await db.collection('bot-altorancho_conversations')
+  // Bot-only conversations (nunca llegaron a un humano) → se archivan como bot_archived
+  const botSnap = await db.collection('bot-altorancho_conversations')
     .where('status', '==', 'bot')
     .where('humanMode', '==', false)
     .get();
 
-  const staleDocs = snap.docs.filter(doc => {
+  // Escaladas a un agente pero sin actividad hace rato → antes quedaban
+  // abiertas para siempre salvo que alguien las cerrara a mano, inflando
+  // "pendientes" en Estadísticas indefinidamente. Se resuelven solas igual.
+  const escalatedSnap = await db.collection('bot-altorancho_conversations')
+    .where('status', '==', 'escalated')
+    .get();
+
+  const isStale = doc => {
     const updatedAt = doc.data().updatedAt;
     return updatedAt && updatedAt.toDate() <= cutoff;
-  });
+  };
 
-  if (staleDocs.length === 0) return;
+  const staleBotDocs = botSnap.docs.filter(isStale);
+  const staleEscalatedDocs = escalatedSnap.docs.filter(isStale);
 
-  console.log(`[inactivity] Cerrando ${staleDocs.length} conversaciones inactivas (>${inactiveHours}h)`);
+  if (staleBotDocs.length === 0 && staleEscalatedDocs.length === 0) return;
 
-  for (const doc of staleDocs) {
+  console.log(`[inactivity] Cerrando ${staleBotDocs.length} conversaciones de bot y ${staleEscalatedDocs.length} escaladas, inactivas hace >${inactiveHours}h`);
+
+  // El envío del mensaje de despedida es best-effort — en un chat viejo lo
+  // más probable es que la ventana de 24hs de WhatsApp ya haya expirado, y
+  // si el cierre dependiera de que el envío funcione, las conversaciones
+  // más viejas (justo las que hay que cerrar) nunca se cerrarían.
+  async function sendFarewell(contactId, channel) {
+    try {
+      if (channel === 'whatsapp') await sendWhatsAppMessage(contactId, farewellMsg);
+      else if (channel === 'instagram') await sendInstagramMessage(contactId, farewellMsg);
+    } catch (err) {
+      console.warn(`[inactivity] No se pudo avisar a ${contactId} (se cierra igual):`, err.response?.data?.error?.message ?? err.message);
+    }
+  }
+
+  for (const doc of staleBotDocs) {
     const data = doc.data();
     const contactId = doc.id;
-
+    await sendFarewell(contactId, data.channel);
     try {
-      if (data.channel === 'whatsapp') {
-        await sendWhatsAppMessage(contactId, farewellMsg);
-      } else if (data.channel === 'instagram') {
-        await sendInstagramMessage(contactId, farewellMsg);
-      }
-
       // Archive as bot_archived (distinct from agent-resolved)
       await updateConversationStatus(contactId, 'bot_archived');
       console.log(`[inactivity] Archivada ${contactId} (${data.channel}) → bot_archived`);
     } catch (err) {
-      console.error(`[inactivity] Error cerrando ${contactId}:`, err.message);
+      console.error(`[inactivity] Error archivando ${contactId}:`, err.message);
+    }
+  }
+
+  for (const doc of staleEscalatedDocs) {
+    const data = doc.data();
+    const contactId = doc.id;
+    await sendFarewell(contactId, data.channel);
+    try {
+      // Resolved (no bot_archived) — la atendió/la tenía asignada un humano
+      await updateConversationStatus(contactId, 'resolved');
+      console.log(`[inactivity] Resuelta por inactividad ${contactId} (${data.channel}, era de ${data.assignedTo ?? 'sin asignar'}) → resolved`);
+    } catch (err) {
+      console.error(`[inactivity] Error resolviendo escalada ${contactId}:`, err.message);
     }
   }
 }
