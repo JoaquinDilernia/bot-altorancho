@@ -68,6 +68,13 @@ const STOCK_PATTERNS = [
 // solo con el SKU.
 const SKU_PATTERN = /\b[A-Z]{2,5}\d{2,5}[A-Z]{1,5}\b/i;
 
+// Solo Atención al Cliente está atendiendo activamente por ahora — el resto
+// de los equipos (Logística, Facturación, Mayorista, depósitos) no están
+// revisando su cola, así que toda derivación (automática o por menú) se
+// fuerza a 'atencion' para que ningún cliente quede esperando en el vacío.
+// Sacar este flag cuando los demás equipos vuelvan a estar operativos.
+const FORCE_ESCALATE_TO_ATENCION = true;
+
 // --- Flujo guiado por menú (bot_config.flowMode === 'menu') ---
 const ENTRY_MENU_BODY = '¡Hola! 👋 Elegí una opción para que te pueda ayudar más rápido:';
 const ENTRY_MENU_BUTTON_TEXT = 'Ver opciones';
@@ -181,7 +188,7 @@ function parseEscalationMarker(text, departments = []) {
     if (!re.test(text)) continue;
     const withoutLine = text.replace(/^[^\n]*\[ESCALAR[^\]]*\][^\n]*\n?/mi, '').trim();
     const cleanText = withoutLine || text.replace(re, '').trim();
-    return { shouldEscalate: true, assignTo, cleanText };
+    return { shouldEscalate: true, assignTo: FORCE_ESCALATE_TO_ATENCION ? 'atencion' : assignTo, cleanText };
   }
   return { shouldEscalate: false, assignTo: null, cleanText: text };
 }
@@ -291,7 +298,7 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
   }
 
   if (interactiveId?.startsWith('dept_')) {
-    const deptId = interactiveId.slice('dept_'.length);
+    const deptId = FORCE_ESCALATE_TO_ATENCION ? 'atencion' : interactiveId.slice('dept_'.length);
     const dept = departments.find(d => d.id === deptId);
     const deptName = dept?.name ?? 'Atención al cliente';
     await dispatchConversation(from, { status: 'escalated', humanMode: true, assignedTo: dept?.id ?? null });
