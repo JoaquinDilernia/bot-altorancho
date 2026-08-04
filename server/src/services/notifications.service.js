@@ -1,6 +1,8 @@
+import crypto from 'crypto';
 import { getDb } from './firebase.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
 import { getOrderById } from './tiendanube.service.js';
+import { getOrCreateConversation, appendMessage, updateMessageStatus } from './conversation.service.js';
 
 const FOLLOWUP_COLLECTION = 'bot-altorancho_pickup_followups';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -125,15 +127,37 @@ export async function sendBulkOrders({ orders, templateName, languageCode, param
       results.push({ number: order.number, status: 'skipped', reason: 'Sin teléfono' });
       continue;
     }
+    const bodyParams = (paramTemplate ?? []).map(tpl =>
+      tpl
+        .replace('{{name}}',   order.customer?.name ?? 'Cliente')
+        .replace('{{number}}', String(order.number))
+        .replace('{{branch}}', order.branch ?? '')
+        .replace('{{total}}',  order.total ?? '')
+    );
+
+    // Registrar el envío en la conversación del cliente — antes esto se
+    // mandaba directo a la API de Meta sin dejar rastro en el chat, así que
+    // si el cliente se quejaba de una plantilla no había forma de ver cuál
+    // se le mandó ni con qué datos.
+    const msgId = crypto.randomUUID();
+    const templateText = bodyParams.filter(Boolean).length > 0
+      ? `[Plantilla: ${templateName}] ${bodyParams.join(' | ')}`
+      : `[Plantilla: ${templateName}]`;
+
     try {
-      const bodyParams = (paramTemplate ?? []).map(tpl =>
-        tpl
-          .replace('{{name}}',   order.customer?.name ?? 'Cliente')
-          .replace('{{number}}', String(order.number))
-          .replace('{{branch}}', order.branch ?? '')
-          .replace('{{total}}',  order.total ?? '')
-      );
-      await sendWhatsAppTemplate(phone, templateName, languageCode, bodyParams);
+      await getOrCreateConversation(phone, 'whatsapp', order.customer?.name ?? null);
+      await appendMessage(phone, { role: 'admin', content: templateText, msgId, msgStatus: 'sending' });
+
+      let sendError = null;
+      let waMsgId = null;
+      try {
+        waMsgId = await sendWhatsAppTemplate(phone, templateName, languageCode, bodyParams);
+      } catch (sendErr) {
+        sendError = sendErr;
+      }
+      await updateMessageStatus(phone, msgId, sendError ? 'error' : 'sent', waMsgId).catch(() => {});
+
+      if (sendError) throw sendError;
       results.push({ number: order.number, status: 'sent', phone });
     } catch (err) {
       const reason = err.response?.data?.error?.message ?? err.message;
