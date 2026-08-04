@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAtLeastAtencionCliente } from '../middleware/requireAuth.js';
 import { getAllTemplates, createTemplate, deleteTemplate, syncTemplateStatuses } from '../services/template.service.js';
 
 const router = Router();
@@ -11,7 +12,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/sync', async (req, res) => {
+router.post('/sync', requireAtLeastAtencionCliente, async (req, res) => {
   try {
     await syncTemplateStatuses();
     res.json(await getAllTemplates());
@@ -20,7 +21,7 @@ router.post('/sync', async (req, res) => {
   }
 });
 
-router.post('/', async (req, res) => {
+router.post('/', requireAtLeastAtencionCliente, async (req, res) => {
   const { name, displayName, bodyText, language, category, params } = req.body;
   if (!name?.trim() || !bodyText?.trim()) return res.status(400).json({ error: 'name y bodyText requeridos' });
   try {
@@ -32,7 +33,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAtLeastAtencionCliente, async (req, res) => {
   try {
     await deleteTemplate(req.params.id);
     res.json({ ok: true });

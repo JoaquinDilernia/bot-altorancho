@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getDb } from '../services/firebase.service.js';
+import { requireAtLeastAtencionCliente } from '../middleware/requireAuth.js';
 
 const router = Router();
 const CONFIG_DOC = 'bot_config';
@@ -15,7 +16,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.put('/', async (req, res) => {
+router.put('/', requireAtLeastAtencionCliente, async (req, res) => {
   try {
     const db = getDb();
     await db.collection('bot-altorancho_config').doc(CONFIG_DOC).set(

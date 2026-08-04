@@ -81,13 +81,17 @@ app.use('/api/labels', requireAuth, labelRoutes);
 
 // Requires at least atencion_cliente
 app.use('/api/knowledge',     requireAuth, requireAtLeastAtencionCliente, knowledgeRoutes);
-app.use('/api/config',        requireAuth, requireAtLeastAtencionCliente, configRoutes);
+// Los operadores necesitan leer la config (ej: seguimiento de retiro en
+// Notificaciones) — la restricción de escritura vive dentro del router.
+app.use('/api/config',        requireAuth, configRoutes);
 app.use('/api/tiendanube',    requireAuth, requireAtLeastAtencionCliente, tiendaNubeRoutes);
 app.use('/api/customers',     requireAuth, requireAtLeastAtencionCliente, customerRoutes);
 app.use('/api/test',          requireAuth, requireAtLeastAtencionCliente, testRoutes);
 app.use('/api/stats',         requireAuth, requireAtLeastAtencionCliente, statsRoutes);
 app.use('/api/quick-replies', requireAuth, requireAtLeastAtencionCliente, quickReplyRoutes);
-app.use('/api/templates',     requireAuth, requireAtLeastAtencionCliente, templateRoutes);
+// Los operadores necesitan leer templates para usar Notificaciones — la
+// restricción de escritura (crear/sincronizar/borrar) vive dentro del router.
+app.use('/api/templates',     requireAuth, templateRoutes);
 app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsRoutes);
 app.use('/api/departments',   requireAuth, requireAtLeastAtencionCliente, departmentRoutes);
 app.use('/api/notifications',  requireAuth, notificationsRoutes);
