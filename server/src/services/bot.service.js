@@ -291,6 +291,12 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
   }
 
   if (interactiveId === 'menu_talk_to_agent') {
+    // Con FORCE_ESCALATE_TO_ATENCION no tiene sentido mostrarle al cliente
+    // una lista de equipos para elegir — todos terminan en el mismo lado
+    // igual, así que se deriva directo sin el paso intermedio.
+    if (FORCE_ESCALATE_TO_ATENCION) {
+      return handleMenuInteraction({ from, channel, interactiveId: 'dept_atencion', conversation, departments, botConfig });
+    }
     await appendMessage(from, { role: 'assistant', content: TALK_TO_AGENT_PROMPT });
     await sendWhatsAppInteractiveList(from, TALK_TO_AGENT_PROMPT, 'Ver equipos', buildDepartmentSections(departments))
       .catch(err => console.error('[bot] Error enviando lista de departamentos:', err.message));
