@@ -309,11 +309,11 @@ function requestStockOnce(sku) {
       },
       timeout: 10000,
     }, res => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
         try {
-          const json = JSON.parse(data);
+          const json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           resolve(Array.isArray(json.result) ? json.result : []);
         } catch (e) {
           reject(e);

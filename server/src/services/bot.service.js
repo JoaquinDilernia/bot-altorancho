@@ -127,7 +127,7 @@ const ORDER_TOPIC_FOLLOWUP = {
     local: 'Perfecto, pasame el número de comprobante para gestionar el cambio.',
   },
 };
-const STOCK_MENU_PROMPT = '¿Qué producto o SKU estás buscando?';
+const STOCK_MENU_PROMPT = '¿Qué producto estás buscando?';
 const TALK_TO_AGENT_PROMPT = '¿Con qué equipo querés hablar?';
 const HORARIOS_FALLBACK = 'No tengo cargados los horarios en este momento. Te recomiendo chequear en https://altorancho.com/ o te derivo con el equipo si preferís.';
 

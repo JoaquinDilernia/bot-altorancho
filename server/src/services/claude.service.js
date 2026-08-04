@@ -65,9 +65,14 @@ function callAnthropicAPIOnce(payload) {
         'content-length': Buffer.byteLength(body),
       },
     }, res => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => {
+        // Concatenar los Buffers crudos y decodificar UTF-8 una sola vez al
+        // final — decodificar chunk por chunk (ej: `data += chunk`) rompe
+        // caracteres multi-byte (tildes, ñ) cuando quedan divididos justo en
+        // el límite entre dos chunks TCP, produciendo "�" en el texto.
+        const data = Buffer.concat(chunks).toString('utf8');
         if (res.statusCode !== 200) {
           const err = new Error(`Anthropic API ${res.statusCode}: ${data}`);
           err.statusCode = res.statusCode;
