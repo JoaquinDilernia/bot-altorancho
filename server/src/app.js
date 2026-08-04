@@ -85,7 +85,10 @@ app.use('/api/knowledge',     requireAuth, requireAtLeastAtencionCliente, knowle
 // Notificaciones) — la restricción de escritura vive dentro del router.
 app.use('/api/config',        requireAuth, configRoutes);
 app.use('/api/tiendanube',    requireAuth, requireAtLeastAtencionCliente, tiendaNubeRoutes);
-app.use('/api/customers',     requireAuth, requireAtLeastAtencionCliente, customerRoutes);
+// Un operador que atiende una conversación derivada necesita ver el perfil
+// del cliente (compras, notas) y poder actualizarlo — no es una acción de
+// administración global como el resto de este bloque.
+app.use('/api/customers',     requireAuth, customerRoutes);
 app.use('/api/test',          requireAuth, requireAtLeastAtencionCliente, testRoutes);
 app.use('/api/stats',         requireAuth, requireAtLeastAtencionCliente, statsRoutes);
 app.use('/api/quick-replies', requireAuth, requireAtLeastAtencionCliente, quickReplyRoutes);
@@ -93,7 +96,9 @@ app.use('/api/quick-replies', requireAuth, requireAtLeastAtencionCliente, quickR
 // restricción de escritura (crear/sincronizar/borrar) vive dentro del router.
 app.use('/api/templates',     requireAuth, templateRoutes);
 app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsRoutes);
-app.use('/api/departments',   requireAuth, requireAtLeastAtencionCliente, departmentRoutes);
+// El propio router ya restringe crear/editar/borrar a requireAdmin —
+// la lectura la necesita cualquier operador para derivar conversaciones.
+app.use('/api/departments',   requireAuth, departmentRoutes);
 app.use('/api/notifications',  requireAuth, notificationsRoutes);
 
 // Health check

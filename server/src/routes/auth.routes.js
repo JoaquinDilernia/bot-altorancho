@@ -41,8 +41,9 @@ router.put('/profile', requireAuth, async (req, res) => {
   }
 });
 
-// Listado de usuarios: atencion_cliente y admin (para resolución de nombres y dispatch)
-router.get('/users', requireAuth, requireAtLeastAtencionCliente, async (req, res) => {
+// Listado de usuarios: cualquier rol autenticado (lo necesita el operador
+// para poder derivar a un agente específico desde Conversaciones)
+router.get('/users', requireAuth, async (req, res) => {
   try {
     res.json(await listUsers());
   } catch (err) {
