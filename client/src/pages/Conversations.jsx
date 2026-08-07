@@ -296,6 +296,8 @@ export default function Conversations() {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState(null); // null = no está buscando; array = resultados del backend
   const [searching, setSearching] = useState(false);
+  const [archivedConversations, setArchivedConversations] = useState(null); // null = no cargado todavía
+  const [loadingArchived, setLoadingArchived] = useState(false);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -380,6 +382,10 @@ export default function Conversations() {
     }, 350);
     return () => clearTimeout(handle);
   }, [search]);
+
+  useEffect(() => {
+    if (filter === 'archived') loadArchivedConversations();
+  }, [filter]);
 
   useEffect(() => {
     clearInterval(pollMsgRef.current);
@@ -491,6 +497,19 @@ export default function Conversations() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadArchivedConversations() {
+    setLoadingArchived(true);
+    try {
+      const res = await authFetch(BASE_URL + '/api/conversations/archived');
+      const data = await res.json();
+      setArchivedConversations(data.conversations ?? []);
+    } catch {
+      setArchivedConversations([]);
+    } finally {
+      setLoadingArchived(false);
     }
   }
 
@@ -733,43 +752,45 @@ export default function Conversations() {
 
   const approvedTemplates = templates.filter(t => t.metaStatus === 'APPROVED');
 
-  const filtered = searchResults !== null ? searchResults : conversations.filter(c => {
-    const status = c.status || 'bot';
-    const isConvArchived = status === 'bot_archived' || status === 'resolved';
-    const convUrgent = c.urgent === true;
-    const convHuman = c.humanMode === true;
+  const filtered = searchResults !== null
+    ? searchResults
+    : filter === 'archived'
+      ? (archivedConversations ?? []).filter(c => !labelFilter || (c.labels ?? []).includes(labelFilter))
+      : conversations.filter(c => {
+        const status = c.status || 'bot';
+        const isConvArchived = status === 'bot_archived' || status === 'resolved';
+        const convUrgent = c.urgent === true;
+        const convHuman = c.humanMode === true;
 
-    if (filter === 'bot') {
-      if (isConvArchived) return false;
-      if (convHuman) return false;
-      if (status !== 'bot') return false;
-    } else if (filter === 'mine') {
-      if (isConvArchived) return false;
-      const myDept = agent?.department;
-      if (!convHuman || (c.assignedTo !== myId && (!myDept || c.assignedTo !== myDept))) return false;
-    } else if (filter === 'critical') {
-      if (isConvArchived) return false;
-      if (!c.critical) return false;
-    } else if (filter === 'urgent') {
-      if (isConvArchived) return false;
-      if (!convUrgent) return false;
-    } else if (filter === 'waiting') {
-      if (isConvArchived) return false;
-      if (!convHuman) return false;
-      if (getSlaWaitMs(c) < 60 * 60 * 1000) return false;
-    } else if (filter === 'teams') {
-      if (isConvArchived) return false;
-      if (!convHuman) return false;
-      if (teamsDeptFilter && c.assignedTo !== teamsDeptFilter) return false;
-    } else if (filter === 'all') {
-      if (isConvArchived) return false;
-    } else if (filter === 'archived') {
-      if (!isConvArchived) return false;
-    }
+        if (filter === 'bot') {
+          if (isConvArchived) return false;
+          if (convHuman) return false;
+          if (status !== 'bot') return false;
+        } else if (filter === 'mine') {
+          if (isConvArchived) return false;
+          const myDept = agent?.department;
+          if (!convHuman || (c.assignedTo !== myId && (!myDept || c.assignedTo !== myDept))) return false;
+        } else if (filter === 'critical') {
+          if (isConvArchived) return false;
+          if (!c.critical) return false;
+        } else if (filter === 'urgent') {
+          if (isConvArchived) return false;
+          if (!convUrgent) return false;
+        } else if (filter === 'waiting') {
+          if (isConvArchived) return false;
+          if (!convHuman) return false;
+          if (getSlaWaitMs(c) < 60 * 60 * 1000) return false;
+        } else if (filter === 'teams') {
+          if (isConvArchived) return false;
+          if (!convHuman) return false;
+          if (teamsDeptFilter && c.assignedTo !== teamsDeptFilter) return false;
+        } else if (filter === 'all') {
+          if (isConvArchived) return false;
+        }
 
-    if (labelFilter && !(c.labels ?? []).includes(labelFilter)) return false;
-    return true;
-  });
+        if (labelFilter && !(c.labels ?? []).includes(labelFilter)) return false;
+        return true;
+      });
 
   if (filter === 'waiting') {
     filtered.sort((a, b) => getSlaWaitMs(b) - getSlaWaitMs(a));
@@ -838,6 +859,8 @@ export default function Conversations() {
             <p className={styles.empty}>Cargando...</p>
           ) : searching ? (
             <p className={styles.empty}>Buscando...</p>
+          ) : (filter === 'archived' && loadingArchived) ? (
+            <p className={styles.empty}>Cargando archivados...</p>
           ) : filtered.length === 0 ? (
             <p className={styles.empty}>Sin resultados.</p>
           ) : (
