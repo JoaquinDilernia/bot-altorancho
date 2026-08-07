@@ -150,6 +150,24 @@ export async function findOdooOrder(query) {
   }
 }
 
+/**
+ * Obtiene teléfono/email de un partner de Odoo por su ID.
+ * Usado para resolver el contacto de un cliente a partir de un pedido
+ * encontrado por referencia (S.../TN...), sin depender de que el pedido
+ * tenga el teléfono embebido en sus campos.
+ * @param {number} partnerId
+ * @returns {Promise<{phone: string|false, email: string|false}|null>}
+ */
+export async function getPartnerContact(partnerId) {
+  try {
+    const results = await callOdoo('res.partner', 'read', [[partnerId]], { fields: ['phone', 'email'] });
+    return results?.[0] ?? null;
+  } catch (err) {
+    console.error('[odoo] getPartnerContact error:', err.message);
+    return null;
+  }
+}
+
 async function getPosOrderLines(lineIds) {
   if (!lineIds?.length) return [];
   try {
