@@ -3,6 +3,7 @@ import multer from 'multer';
 import crypto from 'crypto';
 import {
   listConversations,
+  listArchivedConversations,
   searchConversations,
   getConversationHistory,
   updateConversationStatus,
@@ -130,6 +131,18 @@ router.get('/search', async (req, res) => {
       return res.json({ conversations: [] });
     }
     const conversations = await searchConversations(q);
+    res.json({ conversations });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Tacho de archivados: todo el historial resolved/bot_archived, sin límite ni
+// restricción de departamento. Debe ir antes de las rutas /:contactId/* para
+// no colisionar con ellas.
+router.get('/archived', async (req, res) => {
+  try {
+    const conversations = await listArchivedConversations();
     res.json({ conversations });
   } catch (err) {
     res.status(500).json({ error: err.message });

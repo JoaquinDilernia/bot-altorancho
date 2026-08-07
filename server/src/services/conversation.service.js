@@ -275,6 +275,16 @@ export async function listConversations(filters = {}) {
   return docs;
 }
 
+export async function listArchivedConversations() {
+  const db = getDb();
+  const snapshot = await db.collection(COLLECTION)
+    .where('status', 'in', ['resolved', 'bot_archived'])
+    .get();
+  return snapshot.docs
+    .map(doc => mapConversationDoc(doc, doc.data()))
+    .sort((a, b) => tsToMs(b.updatedAt) - tsToMs(a.updatedAt));
+}
+
 function tsToMs(ts) {
   if (!ts) return 0;
   if (ts._seconds) return ts._seconds * 1000;
