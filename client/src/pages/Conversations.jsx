@@ -719,7 +719,12 @@ export default function Conversations() {
       await loadMessages(selected.id);
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
-        alert(`⚠️ ${data.error ?? 'Error enviando archivo'}`);
+        if (data.windowExpired) {
+          setApiWindowError(true);
+          if (templates.length === 0) loadTemplates();
+        } else {
+          alert(`⚠️ ${data.error ?? 'Error enviando archivo'}`);
+        }
       }
     } finally { setSending(false); }
   }

@@ -373,6 +373,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
 
     const msgId = crypto.randomUUID();
     let sendError = null;
+    let windowExpired = false;
     let metaMediaId = null;
     try {
       if (channel === 'whatsapp') {
@@ -380,6 +381,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
         if (metaMediaId) await sendWhatsAppMedia(contactId, metaMediaId, mimetype, originalname);
       }
     } catch (sendErr) {
+      windowExpired = channel === 'whatsapp' && isWindowExpiredError(sendErr);
       const detail = sendErr.response?.data ?? sendErr.message;
       console.error('[media] Error enviando media:', JSON.stringify(detail));
       sendError = typeof detail === 'object' ? JSON.stringify(detail) : detail;
@@ -401,7 +403,12 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     });
 
     if (sendError) {
-      return res.status(502).json({ error: `Guardado en panel pero falló el envío: ${sendError}` });
+      return res.status(502).json({
+        error: windowExpired
+          ? 'La ventana de WhatsApp de 24hs expiró. Necesitás enviar una plantilla aprobada para retomar la conversación.'
+          : `Guardado en panel pero falló el envío: ${sendError}`,
+        windowExpired,
+      });
     }
     res.json({ ok: true });
   } catch (err) {
