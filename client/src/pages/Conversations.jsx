@@ -294,6 +294,8 @@ export default function Conversations() {
   const [filter, setFilter] = useState('bot');
   const [labelFilter, setLabelFilter] = useState(null);
   const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState(null); // null = no está buscando; array = resultados del backend
+  const [searching, setSearching] = useState(false);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -356,6 +358,28 @@ export default function Conversations() {
     pollConvRef.current = setInterval(loadConversations, 10000);
     return () => clearInterval(pollConvRef.current);
   }, []);
+
+  useEffect(() => {
+    const term = search.trim();
+    if (term.length < 2) {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await authFetch(BASE_URL + `/api/conversations/search?q=${encodeURIComponent(term)}`);
+        const data = await res.json();
+        setSearchResults(data.conversations ?? []);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 350);
+    return () => clearTimeout(handle);
+  }, [search]);
 
   useEffect(() => {
     clearInterval(pollMsgRef.current);
@@ -709,7 +733,7 @@ export default function Conversations() {
 
   const approvedTemplates = templates.filter(t => t.metaStatus === 'APPROVED');
 
-  const filtered = conversations.filter(c => {
+  const filtered = searchResults !== null ? searchResults : conversations.filter(c => {
     const status = c.status || 'bot';
     const isConvArchived = status === 'bot_archived' || status === 'resolved';
     const convUrgent = c.urgent === true;
@@ -744,11 +768,6 @@ export default function Conversations() {
     }
 
     if (labelFilter && !(c.labels ?? []).includes(labelFilter)) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const name = (c.contactName || c.contactId || '').toLowerCase();
-      if (!name.includes(q)) return false;
-    }
     return true;
   });
 
@@ -817,6 +836,8 @@ export default function Conversations() {
         <div className={styles.convList}>
           {loading ? (
             <p className={styles.empty}>Cargando...</p>
+          ) : searching ? (
+            <p className={styles.empty}>Buscando...</p>
           ) : filtered.length === 0 ? (
             <p className={styles.empty}>Sin resultados.</p>
           ) : (

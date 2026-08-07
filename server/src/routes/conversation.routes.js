@@ -3,6 +3,7 @@ import multer from 'multer';
 import crypto from 'crypto';
 import {
   listConversations,
+  searchConversations,
   getConversationHistory,
   updateConversationStatus,
   updateHumanMode,
@@ -115,6 +116,21 @@ router.post('/start', async (req, res) => {
     const db = getDb();
     const updated = await db.collection('bot-altorancho_conversations').doc(normalizedPhone).get();
     res.status(201).json({ id: updated.id, ...updated.data() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Búsqueda global: sin límite de 200, sin filtro de departamento, incluye archivadas.
+// Debe ir antes de las rutas /:contactId/* para no colisionar con ellas.
+router.get('/search', async (req, res) => {
+  try {
+    const q = req.query.q;
+    if (!q || String(q).trim().length < 2) {
+      return res.json({ conversations: [] });
+    }
+    const conversations = await searchConversations(q);
+    res.json({ conversations });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
