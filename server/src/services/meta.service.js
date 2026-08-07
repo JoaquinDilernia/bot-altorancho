@@ -206,9 +206,20 @@ export async function uploadMetaMedia(buffer, mimeType) {
   return data.id;
 }
 
-export async function sendWhatsAppMedia(to, mediaId, mimeType) {
+// Mapea un MIME type al tipo de mensaje que espera la API de WhatsApp.
+// Cualquier archivo que no sea audio/video/imagen (PDFs, Word, etc.) es 'document' —
+// enviarlo como 'image' hace que Meta acepte el request pero el cliente nunca reciba el archivo.
+export function resolveMetaMediaType(mimeType) {
+  if (mimeType?.startsWith('audio/')) return 'audio';
+  if (mimeType?.startsWith('video/')) return 'video';
+  if (mimeType?.startsWith('image/')) return 'image';
+  return 'document';
+}
+
+export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return;
-  const type = mimeType?.startsWith('audio/') ? 'audio' : mimeType?.startsWith('video/') ? 'video' : 'image';
+  const type = resolveMetaMediaType(mimeType);
+  const mediaObject = type === 'document' && fileName ? { id: mediaId, filename: fileName } : { id: mediaId };
   await axios.post(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
     {
@@ -216,7 +227,7 @@ export async function sendWhatsAppMedia(to, mediaId, mimeType) {
       recipient_type: 'individual',
       to,
       type,
-      [type]: { id: mediaId },
+      [type]: mediaObject,
     },
     { headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`, 'Content-Type': 'application/json' } }
   );

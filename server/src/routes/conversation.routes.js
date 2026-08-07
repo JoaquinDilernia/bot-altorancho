@@ -377,7 +377,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     try {
       if (channel === 'whatsapp') {
         metaMediaId = await uploadMetaMedia(buffer, mimetype);
-        if (metaMediaId) await sendWhatsAppMedia(contactId, metaMediaId, mimetype);
+        if (metaMediaId) await sendWhatsAppMedia(contactId, metaMediaId, mimetype, originalname);
       }
     } catch (sendErr) {
       const detail = sendErr.response?.data ?? sendErr.message;
