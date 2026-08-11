@@ -217,6 +217,17 @@ export async function updateMessageStatus(contactId, msgId, newStatus, waMsgId =
   await docRef.update({ messages: updated });
 }
 
+// Update a specific message's transcript by mediaId (audios entrantes no tienen msgId)
+export async function setMessageTranscript(contactId, mediaId, transcript) {
+  const db = getDb();
+  const docRef = db.collection(COLLECTION).doc(contactId);
+  const doc = await docRef.get();
+  if (!doc.exists) return;
+  const messages = doc.data().messages ?? [];
+  const updated = messages.map(m => m.mediaId === mediaId ? { ...m, transcript } : m);
+  await docRef.update({ messages: updated });
+}
+
 // Update a specific message's delivery status by WA message ID (for webhook delivery receipts)
 export async function updateMessageStatusByWaMsgId(waMsgId, newStatus) {
   const db = getDb();

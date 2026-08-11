@@ -16,6 +16,7 @@ import {
   getOrCreateConversation,
   addLabelToConversation,
   updateMessageStatus,
+  setMessageTranscript,
 } from '../services/conversation.service.js';
 import {
   sendWhatsAppMessage,
@@ -24,7 +25,9 @@ import {
   sendWhatsAppMedia,
   uploadMetaMedia,
   getMetaMediaStream,
+  downloadMetaMedia,
 } from '../services/meta.service.js';
+import { transcribeAudio } from '../services/transcription.service.js';
 import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
 import { generateConversationSummary } from '../services/claude.service.js';
@@ -413,6 +416,20 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:contactId/media/:mediaId/transcribe', async (req, res) => {
+  try {
+    const { contactId, mediaId } = req.params;
+    const { buffer, mimeType } = await downloadMetaMedia(mediaId);
+    const transcript = await transcribeAudio(buffer, mimeType);
+    await setMessageTranscript(contactId, mediaId, transcript);
+    res.json({ transcript });
+  } catch (err) {
+    const detail = err.response?.data ?? err.message;
+    console.error('[transcribe] Error:', JSON.stringify(detail));
+    res.status(502).json({ error: typeof detail === 'object' ? JSON.stringify(detail) : detail });
   }
 });
 
