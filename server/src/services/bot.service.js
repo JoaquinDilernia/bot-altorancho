@@ -365,7 +365,12 @@ async function processIncomingMessageInternal(msg) {
   // Auto-reopen archived/resolved conversations when a new message arrives → always goes to bot
   const isArchived = ['resolved', 'bot_archived'].includes(conversation.status)
     || conversation.status === 'urgent'; // legacy urgent status
-  if (isArchived && !conversation.humanMode) {
+  // Si el status es resolved/bot_archived, no debería haber nadie manejando
+  // la conversación en modo humano — esa combinación es en sí misma un
+  // estado inconsistente (ver Task 1 del fix). Se fuerza humanMode a false
+  // acá sin depender de su valor previo, para que el sistema se autorepare
+  // ante cualquier otra forma en que ese estado inconsistente pueda producirse.
+  if (isArchived) {
     const previousStatus = conversation.status;
     await Promise.all([
       updateConversationStatus(from, 'bot'),
