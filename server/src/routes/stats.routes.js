@@ -42,6 +42,17 @@ function diffMin(a, b) {
   return (db - da) / 60000;
 }
 
+function isInPeriod(ts, startMs) {
+  const d = toDate(ts);
+  return !!d && d.getTime() >= startMs;
+}
+
+function resolveDeptForAssignee(assignee, deptIds, agentsByEmail) {
+  if (deptIds.has(assignee)) return assignee;
+  const agent = agentsByEmail.get(assignee);
+  return agent?.department && deptIds.has(agent.department) ? agent.department : null;
+}
+
 router.get('/', async (req, res) => {
   try {
     const period = req.query.period ?? 'week';
@@ -49,16 +60,25 @@ router.get('/', async (req, res) => {
     const start = getPeriodStart(period);
     const startTs = admin.firestore.Timestamp.fromDate(start);
 
-    const [snap, agentsSnap, deptsSnap] = await Promise.all([
-      db.collection('bot-altorancho_conversations').where('createdAt', '>=', startTs).get(),
+    const [snap, agentsSnap, deptsSnap, urgentSnap] = await Promise.all([
+      db.collection('bot-altorancho_conversations').where('updatedAt', '>=', startTs).get(),
       db.collection('bot-altorancho_agents').get(),
       db.collection('bot-altorancho_departments').get(),
+      db.collection('bot-altorancho_conversations').where('urgent', '==', true).get(),
     ]);
 
     const conversations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const departments = deptsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
     const deptIds = new Set(departments.map(d => d.id));
+    const agentsByEmail = new Map(agents.map(a => [a.email, a]));
+
+    // Urgentes: siempre "ahora mismo", sin acotar por período (igual criterio
+    // que la tarjeta "Pendientes" y el filtro "Urgentes" de Conversaciones).
+    const urgentCount = urgentSnap.docs
+      .map(d => d.data())
+      .filter(c => c.status !== 'resolved' && c.status !== 'bot_archived')
+      .length;
 
     // --- Buckets ---
     const agentBuckets = { bot: { handled: 0, resolved: 0 } };
@@ -68,7 +88,7 @@ router.get('/', async (req, res) => {
     const deptBuckets = {};
     for (const dep of departments) deptBuckets[dep.id] = { name: dep.name, handled: 0, resolved: 0, avgFirstResponseMin: null, _responseSamples: [] };
 
-    const byStatus  = { bot: 0, urgent: 0, escalated: 0, resolved: 0 };
+    const byStatus  = { bot: 0, escalated: 0, resolved: 0, bot_archived: 0 };
     const byChannel = { whatsapp: 0, instagram: 0 };
     const labelMap  = {};
     const dayMap    = {};
@@ -78,9 +98,10 @@ router.get('/', async (req, res) => {
     const resolutionSamples = [];
 
     for (const conv of conversations) {
-      const status   = conv.status  ?? 'bot';
-      const channel  = conv.channel ?? 'whatsapp';
-      const assignee = conv.assignedTo ?? 'bot';
+      const rawStatus = conv.status ?? 'bot';
+      const status    = rawStatus === 'urgent' ? 'bot' : rawStatus; // legado: 'urgent' era status, ahora es flag
+      const channel   = conv.channel ?? 'whatsapp';
+      const assignee  = conv.assignedTo ?? 'bot';
 
       if (status in byStatus)   byStatus[status]++;
       if (channel in byChannel) byChannel[channel]++;
@@ -89,20 +110,22 @@ router.get('/', async (req, res) => {
       bucket.handled++;
       if (status === 'resolved' || status === 'bot_archived') bucket.resolved++;
 
-      // Department breakdown
-      if (deptIds.has(assignee) && deptBuckets[assignee]) {
-        deptBuckets[assignee].handled++;
-        if (status === 'resolved' || status === 'bot_archived') deptBuckets[assignee].resolved++;
+      // Department breakdown — resolver el depto real aunque el asignado
+      // actual sea un agente puntual que tomó un caso derivado (take_over)
+      const resolvedDept = resolveDeptForAssignee(assignee, deptIds, agentsByEmail);
+      if (resolvedDept && deptBuckets[resolvedDept]) {
+        deptBuckets[resolvedDept].handled++;
+        if (status === 'resolved' || status === 'bot_archived') deptBuckets[resolvedDept].resolved++;
       }
 
-      // Escalation tracking
-      if (conv.escalatedAt || status === 'escalated') {
+      // Escalation tracking: solo escalaciones ocurridas dentro del período
+      if (isInPeriod(conv.escalatedAt, start.getTime())) {
         escalatedCount++;
         // First response time: escalatedAt → firstAgentResponseAt
         const respMin = diffMin(conv.escalatedAt, conv.firstAgentResponseAt);
         if (respMin !== null && respMin >= 0 && respMin < 24 * 60) {
           firstResponseSamples.push(respMin);
-          if (deptIds.has(assignee)) deptBuckets[assignee]._responseSamples.push(respMin);
+          if (resolvedDept) deptBuckets[resolvedDept]._responseSamples.push(respMin);
         }
       }
 
@@ -135,8 +158,9 @@ router.get('/', async (req, res) => {
 
     // --- Derived metrics ---
     const total = conversations.length;
-    const resolved = byStatus.resolved + (conversations.filter(c => c.status === 'bot_archived').length);
-    const botHandledPct = total > 0 ? Math.round((agentBuckets['bot'].handled / total) * 100) : 0;
+    const resolved = conversations.filter(c => isInPeriod(c.resolvedAt, start.getTime())).length;
+    const neverEscalatedCount = conversations.filter(c => !c.escalatedAt).length;
+    const botHandledPct = total > 0 ? Math.round((neverEscalatedCount / total) * 100) : 0;
     const pending = conversations.filter(c => {
       const s = c.status ?? 'bot';
       return s !== 'resolved' && s !== 'bot_archived';
@@ -183,6 +207,7 @@ router.get('/', async (req, res) => {
       resolved,
       botResolutionRate: botHandledPct,
       pending,
+      urgentCount,
       escalatedCount,
       escalationRate,
       avgFirstResponseMin,
