@@ -233,11 +233,16 @@ export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null) 
   );
 }
 
-export async function getMetaMediaStream(mediaId, res) {
-  if (!process.env.META_ACCESS_TOKEN) throw new Error('No META_ACCESS_TOKEN');
+async function fetchMetaMediaInfo(mediaId) {
   const { data: info } = await axios.get(`${META_API_URL}/${mediaId}`, {
     headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
   });
+  return info; // { url, mime_type, ... }
+}
+
+export async function getMetaMediaStream(mediaId, res) {
+  if (!process.env.META_ACCESS_TOKEN) throw new Error('No META_ACCESS_TOKEN');
+  const info = await fetchMetaMediaInfo(mediaId);
   const response = await axios.get(info.url, {
     headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
     responseType: 'stream',
@@ -245,6 +250,16 @@ export async function getMetaMediaStream(mediaId, res) {
   res.setHeader('Content-Type', info.mime_type || 'application/octet-stream');
   res.setHeader('Cache-Control', 'private, max-age=3600');
   response.data.pipe(res);
+}
+
+export async function downloadMetaMedia(mediaId) {
+  if (!process.env.META_ACCESS_TOKEN) throw new Error('No META_ACCESS_TOKEN');
+  const info = await fetchMetaMediaInfo(mediaId);
+  const response = await axios.get(info.url, {
+    headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
+    responseType: 'arraybuffer',
+  });
+  return { buffer: Buffer.from(response.data), mimeType: info.mime_type || 'application/octet-stream' };
 }
 
 export async function createMetaTemplate({ name, language, category, bodyText, params = [] }) {
