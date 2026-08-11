@@ -270,7 +270,14 @@ router.post('/:contactId/reply', async (req, res) => {
     const doc = await db.collection('bot-altorancho_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
 
-    const { channel } = doc.data();
+    const { channel, status } = doc.data();
+
+    // Si la conversación estaba archivada/resuelta, un agente escribiéndole
+    // directo la reabre — si no, queda invisible en Archivados mientras la
+    // charla sigue (ver docs/superpowers/specs/2026-08-11-fix-reapertura-archivados-design.md)
+    if (status === 'resolved' || status === 'bot_archived') {
+      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+    }
 
     // Generate a local message ID for tracking delivery status
     const msgId = crypto.randomUUID();
@@ -366,7 +373,13 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     const db = getDb();
     const doc = await db.collection('bot-altorancho_conversations').doc(contactId).get();
     if (!doc.exists) return res.status(404).json({ error: 'Conversación no encontrada' });
-    const { channel } = doc.data();
+    const { channel, status } = doc.data();
+
+    // Mismo criterio que en /reply: mandar un archivo a una conversación
+    // archivada la reabre, en vez de dejarla invisible en Archivados.
+    if (status === 'resolved' || status === 'bot_archived') {
+      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+    }
 
     const { buffer, mimetype, originalname } = req.file;
     const mediaType = mimetype.startsWith('audio/') ? 'audio'
