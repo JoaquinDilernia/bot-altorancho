@@ -156,7 +156,7 @@ async function downloadMedia(url, suggestedExt = 'jpg') {
   }
 }
 
-function MessageBubble({ msg, onRetry }) {
+function MessageBubble({ msg, onRetry, contactId }) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
   const token = localStorage.getItem('altorancho_token');
@@ -165,6 +165,24 @@ function MessageBubble({ msg, onRetry }) {
     : null;
   const isError = isAdmin && msg.msgStatus === 'error';
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [transcript, setTranscript] = useState(msg.transcript ?? null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeError, setTranscribeError] = useState('');
+
+  async function handleTranscribe() {
+    setTranscribing(true);
+    setTranscribeError('');
+    try {
+      const res = await authFetch(BASE_URL + `/api/conversations/${contactId}/media/${msg.mediaId}/transcribe`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error al transcribir');
+      setTranscript(data.transcript);
+    } catch (err) {
+      setTranscribeError(err.message);
+    } finally {
+      setTranscribing(false);
+    }
+  }
 
   return (
     <div className={`${styles.msg} ${isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot}`}>
@@ -197,7 +215,17 @@ function MessageBubble({ msg, onRetry }) {
           </>
         )}
         {msg.mediaType === 'audio' && mediaProxyUrl && (
-          <audio controls src={mediaProxyUrl} className={styles.msgAudio} />
+          <div className={styles.msgAudioWrap}>
+            <audio controls src={mediaProxyUrl} className={styles.msgAudio} />
+            {transcript ? (
+              <p className={styles.msgTranscript}>📝 {transcript}</p>
+            ) : (
+              <button type="button" className={styles.transcribeBtn} onClick={handleTranscribe} disabled={transcribing}>
+                {transcribing ? 'Transcribiendo...' : '📝 Transcribir'}
+              </button>
+            )}
+            {transcribeError && <p className={styles.msgTranscribeError}>{transcribeError}</p>}
+          </div>
         )}
         {msg.mediaType === 'video' && mediaProxyUrl && (
           <video controls src={mediaProxyUrl} className={styles.msgVideo} />
@@ -1056,6 +1084,7 @@ export default function Conversations() {
                       key={i}
                       msg={msg}
                       onRetry={canRetry ? handleRetry : null}
+                      contactId={selected.id}
                     />
                   );
                 })
