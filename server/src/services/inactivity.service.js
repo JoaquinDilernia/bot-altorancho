@@ -1,6 +1,6 @@
 import { getDb } from './firebase.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage } from './meta.service.js';
-import { updateConversationStatus } from './conversation.service.js';
+import { updateConversationStatus, dispatchConversation } from './conversation.service.js';
 
 const DEFAULT_INACTIVE_HOURS = 24;
 const DEFAULT_FAREWELL = 'Hola! Cerramos esta consulta por inactividad. Si necesitás ayuda en el futuro, escribinos cuando quieras 😊';
@@ -72,8 +72,12 @@ export async function closeInactiveConversations() {
     const contactId = doc.id;
     await sendFarewell(contactId, data.channel);
     try {
-      // Resolved (no bot_archived) — la atendió/la tenía asignada un humano
-      await updateConversationStatus(contactId, 'resolved');
+      // Resolved (no bot_archived) — la atendió/la tenía asignada un humano.
+      // dispatchConversation (no updateConversationStatus) apaga humanMode
+      // junto con el status — si no, queda "resolved" con humanMode todavía
+      // en true y la reapertura automática nunca se dispara cuando el
+      // cliente vuelve a escribir.
+      await dispatchConversation(contactId, { status: 'resolved', humanMode: false });
       console.log(`[inactivity] Resuelta por inactividad ${contactId} (${data.channel}, era de ${data.assignedTo ?? 'sin asignar'}) → resolved`);
     } catch (err) {
       console.error(`[inactivity] Error resolviendo escalada ${contactId}:`, err.message);
