@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import { getDb } from './firebase.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
 import { getOrderById } from './tiendanube.service.js';
-import { getOrCreateConversation, appendMessage, updateMessageStatus } from './conversation.service.js';
+import { getOrCreateConversation, appendMessage, updateMessageStatus, markNotified } from './conversation.service.js';
 
 const FOLLOWUP_COLLECTION = 'bot-altorancho_pickup_followups';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -158,6 +158,7 @@ export async function sendBulkOrders({ orders, templateName, languageCode, param
       await updateMessageStatus(phone, msgId, sendError ? 'error' : 'sent', waMsgId).catch(() => {});
 
       if (sendError) throw sendError;
+      await markNotified(phone);
       results.push({ number: order.number, status: 'sent', phone });
     } catch (err) {
       const reason = err.response?.data?.error?.message ?? err.message;

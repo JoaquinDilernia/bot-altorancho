@@ -138,6 +138,14 @@ export async function setUrgentFlag(contactId, urgent) {
   });
 }
 
+export async function markNotified(contactId) {
+  const db = getDb();
+  await db.collection(COLLECTION).doc(contactId).update({
+    notifiedAt: new Date(),
+    updatedAt: new Date(),
+  });
+}
+
 export async function dispatchConversation(contactId, patch) {
   const db = getDb();
   const docRef = db.collection(COLLECTION).doc(contactId);
@@ -250,6 +258,7 @@ function mapConversationDoc(doc, data) {
     lastMessage: lastMsg?.content ?? '',
     lastMessageAt: lastMsg?.timestamp ?? data.updatedAt,
     lastClientMessageAt: data.lastClientMessageAt ?? null,
+    notifiedAt: data.notifiedAt ?? null,
     consecutiveClientMessages: data.consecutiveClientMessages ?? 0,
     waitingSince: data.waitingSince ?? null,
     escalatedAt: data.escalatedAt ?? null,
