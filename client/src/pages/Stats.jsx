@@ -9,10 +9,10 @@ const PERIODS = [
 ];
 
 const STATUS_META = {
-  bot:       { label: 'Bot activo', color: 'var(--color-primary)' },
-  urgent:    { label: 'Urgente',    color: 'var(--color-status-urgent)' },
-  escalated: { label: 'Escalado',   color: '#8b5cf6' },
-  resolved:  { label: 'Resuelto',   color: 'var(--color-status-resolved)' },
+  bot:          { label: 'Bot activo',        color: 'var(--color-primary)' },
+  escalated:    { label: 'Escalado',          color: '#8b5cf6' },
+  resolved:     { label: 'Resuelto',          color: 'var(--color-status-resolved)' },
+  bot_archived: { label: 'Archivado por bot', color: '#94a3b8' },
 };
 
 const AGENT_COLORS = ['var(--color-primary)', '#8b5cf6', '#0ea5e9', '#f59e0b', '#10b981', '#ef4444'];
@@ -105,6 +105,11 @@ export default function Stats() {
               title="Pendientes" value={data.pending}
               sub="activas sin resolver"
               accent={data.pending > 0 ? 'var(--color-status-urgent)' : undefined}
+            />
+            <KpiCard
+              title="Urgentes" value={data.urgentCount}
+              sub="abiertas y marcadas urgentes"
+              accent={data.urgentCount > 0 ? 'var(--color-status-urgent)' : undefined}
             />
           </div>
 
