@@ -90,6 +90,14 @@ function formatTime(ts) {
   return d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 }
 
+function formatDateTime(ts) {
+  const d = tsToDate(ts);
+  if (!d) return '';
+  const datePart = d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+  const timePart = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  return `${datePart} ${timePart}`;
+}
+
 function formatDate(ts) {
   const d = tsToDate(ts);
   if (!d) return '';
@@ -214,7 +222,7 @@ function MessageBubble({ msg, onRetry }) {
       </div>
       <span className={styles.msgMeta}>
         {isUser ? 'Cliente' : isAdmin ? 'Agente' : 'Alto'}
-        {msg.timestamp ? ` · ${formatTime(msg.timestamp)}` : ''}
+        {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
         {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} />}
       </span>
     </div>
@@ -1282,6 +1290,12 @@ export default function Conversations() {
                   <div className={styles.profileRow}>
                     <span className={styles.profileKey}>Nombre</span>
                     <span className={styles.profileVal}>{customer.contactName}</span>
+                  </div>
+                )}
+                {customer.channel === 'whatsapp' && customer.id && (
+                  <div className={styles.profileRow}>
+                    <span className={styles.profileKey}>Teléfono</span>
+                    <span className={styles.profileVal}>+{customer.id}</span>
                   </div>
                 )}
                 {customer.tnEmail && (
