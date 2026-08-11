@@ -21,13 +21,14 @@ const CHANNEL_CONFIG = {
 };
 
 const FILTERS = [
-  { value: 'bot',      label: 'Bot' },
-  { value: 'mine',     label: 'Mis casos' },
-  { value: 'critical', label: '🔴 Crítico' },
-  { value: 'urgent',   label: 'Urgentes' },
-  { value: 'waiting',  label: 'Esperando ⏳' },
-  { value: 'archived', label: 'Archivos' },
-  { value: 'teams',    label: 'Equipos',  minRole: 'atencion_cliente' },
+  { value: 'bot',           label: 'Bot' },
+  { value: 'mine',          label: 'Mis casos' },
+  { value: 'critical',      label: '🔴 Crítico' },
+  { value: 'urgent',        label: 'Urgentes' },
+  { value: 'waiting',       label: 'Esperando ⏳' },
+  { value: 'notifications', label: 'Notificaciones' },
+  { value: 'archived',      label: 'Archivos' },
+  { value: 'teams',         label: 'Equipos',  minRole: 'atencion_cliente' },
 ];
 
 const SLA_WARN_MS  = 15 * 60 * 1000;  // 15 min → amarillo
@@ -791,6 +792,12 @@ export default function Conversations() {
           if (teamsDeptFilter && c.assignedTo !== teamsDeptFilter) return false;
         } else if (filter === 'all') {
           if (isConvArchived) return false;
+        } else if (filter === 'notifications') {
+          if (isConvArchived) return false;
+          if (!c.notifiedAt) return false;
+          const notifiedAt = tsToDate(c.notifiedAt);
+          const lastClientMsg = tsToDate(c.lastClientMessageAt);
+          if (notifiedAt && lastClientMsg && lastClientMsg >= notifiedAt) return false;
         }
 
         if (labelFilter && !(c.labels ?? []).includes(labelFilter)) return false;
