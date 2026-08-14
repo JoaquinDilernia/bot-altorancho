@@ -341,8 +341,25 @@ export function processIncomingMessage(msg) {
   return current;
 }
 
+const REPLY_PREVIEW_MAX = 80;
+
+// Snapshot del mensaje citado (texto + rol) al momento de la cita — no una
+// referencia viva. Si el mensaje citado no está en el historial (se recortó
+// de los últimos 200, o es de antes de este cambio), no rompe nada: se
+// guarda el mensaje nuevo sin `replyTo`.
+function resolveReplyTo(history, replyToWaMsgId) {
+  if (!replyToWaMsgId) return null;
+  const original = history.find(m => m.waMsgId === replyToWaMsgId);
+  if (!original) return null;
+  const content = original.content ?? '';
+  const preview = content.length > REPLY_PREVIEW_MAX
+    ? `${content.slice(0, REPLY_PREVIEW_MAX)}…`
+    : content;
+  return { preview, role: original.role };
+}
+
 async function processIncomingMessageInternal(msg) {
-  const { channel, from, text, type, mediaId, mediaUrl, contactName } = msg;
+  const { channel, from, text, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
 
   let conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments;
   try {
@@ -361,6 +378,7 @@ async function processIncomingMessageInternal(msg) {
   }
   const botConfig = configDoc.exists ? configDoc.data() : {};
   console.log(`[bot] Contexto cargado para ${from} — humanMode: ${conversation.humanMode}, status: ${conversation.status}`);
+  const replyTo = resolveReplyTo(history, replyToWaMsgId);
 
   // Auto-reopen archived/resolved conversations when a new message arrives → always goes to bot
   const isArchived = ['resolved', 'bot_archived'].includes(conversation.status)
@@ -402,9 +420,11 @@ async function processIncomingMessageInternal(msg) {
         mediaType: type,
         mediaId: mediaId ?? null,
         contactName,
+        messageId,
+        ...(replyTo && { replyTo }),
       });
     } else if (text?.trim()) {
-      await appendMessage(from, { role: 'user', content: text, contactName });
+      await appendMessage(from, { role: 'user', content: text, contactName, messageId, ...(replyTo && { replyTo }) });
     }
     console.log(`[bot] humanMode activo para ${from} — bot silenciado`);
     return;
@@ -415,7 +435,7 @@ async function processIncomingMessageInternal(msg) {
     const sent = await sendEntryMenu(from);
     if (sent) {
       if (text?.trim()) {
-        await appendMessage(from, { role: 'user', content: text, contactName });
+        await appendMessage(from, { role: 'user', content: text, contactName, messageId, ...(replyTo && { replyTo }) });
       }
       await appendMessage(from, { role: 'assistant', content: ENTRY_MENU_BODY });
       await setMenuState(from, { menuShown: true });
@@ -429,7 +449,7 @@ async function processIncomingMessageInternal(msg) {
 
   // --- Respuestas del menú guiado (botones/listas) ---
   if (type === 'interactive') {
-    await appendMessage(from, { role: 'user', content: text || '(selección de menú)', contactName });
+    await appendMessage(from, { role: 'user', content: text || '(selección de menú)', contactName, messageId, ...(replyTo && { replyTo }) });
     const handled = await handleMenuInteraction({ from, channel, interactiveId: msg.interactiveId, conversation, departments, botConfig });
     if (!handled) {
       console.warn(`[bot] interactiveId no reconocido para ${from}: ${msg.interactiveId}`);
@@ -444,7 +464,7 @@ async function processIncomingMessageInternal(msg) {
   if (type === 'audio') {
     const prevAudios = history.filter(m => m.role === 'user' && m.mediaType === 'audio').length;
     const audioUserMsg = '[Audio recibido]';
-    await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', mediaId: mediaId ?? null, contactName });
+    await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
 
     let reply;
     if (prevAudios >= 1) {
@@ -467,7 +487,7 @@ async function processIncomingMessageInternal(msg) {
     const reply = 'Recibí un archivo, pero no puedo procesarlo directamente. ¿Podés contarme por escrito en qué te ayudo?';
     // mediaId se guardaba acá antes — sin él, el archivo (ej: un PDF) quedaba
     // imposible de ver o descargar después desde el panel.
-    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', mediaType: 'document', mediaId: mediaId ?? null, contactName });
+    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', mediaType: 'document', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
     await appendMessage(from, { role: 'assistant', content: reply });
     if (channel === 'whatsapp') await sendWhatsAppMessage(from, reply);
     else if (channel === 'instagram') await sendInstagramMessage(from, reply);
@@ -487,10 +507,10 @@ async function processIncomingMessageInternal(msg) {
       } catch { /* continue without image */ }
     }
     const userContent = text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]';
-    await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', mediaId: mediaId ?? null, contactName });
+    await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
   } else {
     if (!text?.trim()) return;
-    await appendMessage(from, { role: 'user', content: text, contactName });
+    await appendMessage(from, { role: 'user', content: text, contactName, messageId, ...(replyTo && { replyTo }) });
   }
 
   // Detect urgency keywords and flag (as urgent flag, not status change)
