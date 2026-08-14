@@ -308,6 +308,7 @@ export function parseWhatsAppMessage(webhookBody) {
 
     const msg = value.messages[0];
     const contactName = value.contacts?.[0]?.profile?.name ?? 'Cliente';
+    const replyToWaMsgId = msg.context?.id ?? null;
 
     if (msg.type === 'interactive') {
       const reply = msg.interactive?.list_reply ?? msg.interactive?.button_reply;
@@ -321,6 +322,7 @@ export function parseWhatsAppMessage(webhookBody) {
         mediaId: null,
         timestamp: msg.timestamp,
         contactName,
+        replyToWaMsgId,
       };
     }
 
@@ -337,6 +339,7 @@ export function parseWhatsAppMessage(webhookBody) {
       mediaId,
       timestamp: msg.timestamp,
       contactName,
+      replyToWaMsgId,
     };
   } catch {
     return null;
