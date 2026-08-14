@@ -52,7 +52,10 @@ export async function appendMessage(contactId, message) {
   const doc = await docRef.get();
   const docData = doc.exists ? doc.data() : {};
   const current = docData.messages ?? [];
-  const updated = [...current, { ...message, timestamp: new Date() }].slice(-200);
+  const { messageId, ...rest } = message;
+  const stored = { ...rest, timestamp: new Date() };
+  if (message.role === 'user' && messageId) stored.waMsgId = messageId;
+  const updated = [...current, stored].slice(-200);
 
   const CRITICAL_THRESHOLD = 4;
 
@@ -86,7 +89,7 @@ export async function appendMessage(contactId, message) {
     }
   }
 
-  await docRef.update({ messages: updated, updatedAt: new Date(), ...extra });
+  await docRef.set({ messages: updated, updatedAt: new Date(), ...extra }, { merge: true });
 }
 
 export async function getConversationHistory(contactId) {
