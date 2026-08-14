@@ -12,6 +12,11 @@ export async function getAllLabels() {
 
 export async function createLabel(name, color) {
   const db = getDb();
+  const existing = await db.collection(COLLECTION).where('name', '==', name).limit(1).get();
+  if (!existing.empty) {
+    const doc = existing.docs[0];
+    return { id: doc.id, ...doc.data() };
+  }
   const ref = await db.collection(COLLECTION).add({ name, color, createdAt: new Date() });
   return { id: ref.id, name, color };
 }
