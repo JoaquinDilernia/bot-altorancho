@@ -89,7 +89,7 @@ export async function appendMessage(contactId, message) {
     }
   }
 
-  await docRef.set({ messages: updated, updatedAt: new Date(), ...extra }, { merge: true });
+  await docRef.update({ messages: updated, updatedAt: new Date(), ...extra });
 }
 
 export async function getConversationHistory(contactId) {
