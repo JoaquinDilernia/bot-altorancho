@@ -439,6 +439,28 @@
   border-bottom-right-radius: var(--radius-sm);
 }
 
+.msgReplyQuote {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px var(--space-2);
+  margin-bottom: var(--space-1);
+  border-left: 3px solid currentColor;
+  border-radius: var(--radius-sm);
+  background: rgba(127, 127, 127, 0.15);
+  opacity: 0.85;
+}
+.msgReplyQuoteFrom {
+  font-size: 10px;
+  font-weight: 600;
+}
+.msgReplyQuoteText {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .msgMeta {
   font-size: 10px;
   color: var(--color-text-faint);

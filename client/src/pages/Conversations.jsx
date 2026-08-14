@@ -156,6 +156,8 @@ async function downloadMedia(url, suggestedExt = 'jpg') {
   }
 }
 
+const REPLY_ROLE_LABELS = { user: 'Cliente', admin: 'Agente', assistant: 'Alto' };
+
 function MessageBubble({ msg, onRetry, contactId }) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
@@ -187,6 +189,12 @@ function MessageBubble({ msg, onRetry, contactId }) {
   return (
     <div className={`${styles.msg} ${isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot}`}>
       <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''}`}>
+        {msg.replyTo && (
+          <div className={styles.msgReplyQuote}>
+            <span className={styles.msgReplyQuoteFrom}>{REPLY_ROLE_LABELS[msg.replyTo.role] ?? ''}</span>
+            <span className={styles.msgReplyQuoteText}>{msg.replyTo.preview}</span>
+          </div>
+        )}
         {msg.mediaType === 'image' && mediaProxyUrl && (
           <>
             <img
