@@ -6,24 +6,61 @@ import { requireAuth } from '../middleware/requireAuth.js';
 const router = Router();
 router.use(requireAuth);
 
-function getPeriodStart(period) {
+const MAX_CUSTOM_DAYS = 92; // ~3 meses, evita tablas/queries desmedidas
+
+// Alto Rancho opera en Argentina (UTC-3 fijo, sin horario de verano desde 2009).
+// Los "días" de las estadísticas (períodos y desglose diario) deben calcularse
+// en ese huso horario SIEMPRE, sin importar en qué TZ corra el proceso Node
+// (en Railway/producción suele ser UTC por default). Si esto se calculara con
+// el TZ del proceso, un mensaje enviado entre las 21:00 y 23:59 hora Argentina
+// caería en el día siguiente cuando el server corre en UTC.
+const AR_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+// Reinterpreta un instante real como si sus componentes UTC fueran la hora de
+// pared en Argentina (para poder usar getUTC*/setUTC* como si fueran locales).
+function toArWallClock(date) {
+  return new Date(date.getTime() - AR_OFFSET_MS);
+}
+
+// Inverso de toArWallClock: vuelve del "reloj de pared ARG" al instante real.
+function fromArWallClock(wallClockDate) {
+  return new Date(wallClockDate.getTime() + AR_OFFSET_MS);
+}
+
+// 00:00:00.000 hora Argentina del día calendario que contiene `date`, como instante real.
+function arMidnight(date) {
+  const wall = toArWallClock(date);
+  wall.setUTCHours(0, 0, 0, 0);
+  return fromArWallClock(wall);
+}
+
+function getPeriodRange(period, fromStr, toStr) {
   const now = new Date();
+
+  if (period === 'custom' && fromStr && toStr) {
+    // fromStr/toStr son "YYYY-MM-DD" elegidos por el usuario como días
+    // calendario en Argentina — se interpretan directamente como tales.
+    const start = fromArWallClock(new Date(`${fromStr}T00:00:00Z`));
+    let end = fromArWallClock(new Date(`${toStr}T23:59:59.999Z`));
+    if (end > now) end = now;
+    if (start > end) return { start: end, end };
+
+    const spanDays = Math.floor((end - start) / 86400000) + 1;
+    if (spanDays > MAX_CUSTOM_DAYS) {
+      const cappedStart = arMidnight(new Date(end.getTime() - (MAX_CUSTOM_DAYS - 1) * 86400000));
+      return { start: cappedStart, end };
+    }
+    return { start, end };
+  }
+
   if (period === 'day') {
-    const d = new Date(now);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    return { start: arMidnight(now), end: now };
   }
   if (period === 'week') {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 6);
-    d.setHours(0, 0, 0, 0);
-    return d;
+    return { start: arMidnight(new Date(now.getTime() - 6 * 86400000)), end: now };
   }
-  // month
-  const d = new Date(now);
-  d.setDate(d.getDate() - 29);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  // month (default)
+  return { start: arMidnight(new Date(now.getTime() - 29 * 86400000)), end: now };
 }
 
 function toDate(val) {
@@ -32,8 +69,9 @@ function toDate(val) {
   return new Date(val);
 }
 
+// Clave de día calendario en horario de Argentina (ver nota de AR_OFFSET_MS arriba).
 function isoDate(d) {
-  return d.toISOString().slice(0, 10);
+  return toArWallClock(d).toISOString().slice(0, 10);
 }
 
 function diffMin(a, b) {
@@ -42,9 +80,9 @@ function diffMin(a, b) {
   return (db - da) / 60000;
 }
 
-function isInPeriod(ts, startMs) {
+function isInRange(ts, startMs, endMs) {
   const d = toDate(ts);
-  return !!d && d.getTime() >= startMs;
+  return !!d && d.getTime() >= startMs && d.getTime() <= endMs;
 }
 
 function resolveDeptForAssignee(assignee, deptIds, agentsByEmail) {
@@ -57,11 +95,17 @@ router.get('/', async (req, res) => {
   try {
     const period = req.query.period ?? 'week';
     const db = getDb();
-    const start = getPeriodStart(period);
+    const { start, end } = getPeriodRange(period, req.query.from, req.query.to);
     const startTs = admin.firestore.Timestamp.fromDate(start);
+    const endTs = admin.firestore.Timestamp.fromDate(end);
+    const startMs = start.getTime();
+    const endMs = end.getTime();
 
     const [snap, agentsSnap, deptsSnap, urgentSnap] = await Promise.all([
-      db.collection('bot-altorancho_conversations').where('updatedAt', '>=', startTs).get(),
+      db.collection('bot-altorancho_conversations')
+        .where('updatedAt', '>=', startTs)
+        .where('updatedAt', '<=', endTs)
+        .get(),
       db.collection('bot-altorancho_agents').get(),
       db.collection('bot-altorancho_departments').get(),
       db.collection('bot-altorancho_conversations').where('urgent', '==', true).get(),
@@ -91,9 +135,18 @@ router.get('/', async (req, res) => {
     const byStatus  = { bot: 0, escalated: 0, resolved: 0, bot_archived: 0 };
     const byChannel = { whatsapp: 0, instagram: 0 };
     const labelMap  = {};
-    const dayMap    = {};
+
+    // Desglose diario: mensajes recibidos, resueltas por bot/agente, derivadas
+    const dayMap = {};
+    function dayBucket(key) {
+      if (!dayMap[key]) dayMap[key] = { received: 0, resolvedByBot: 0, escalated: 0, resolvedByAgent: 0 };
+      return dayMap[key];
+    }
 
     let escalatedCount = 0;
+    let messagesReceived = 0;
+    let resolvedByBot = 0;
+    let resolvedByAgent = 0;
     const firstResponseSamples = [];
     const resolutionSamples = [];
 
@@ -118,14 +171,29 @@ router.get('/', async (req, res) => {
         if (status === 'resolved' || status === 'bot_archived') deptBuckets[resolvedDept].resolved++;
       }
 
-      // Escalation tracking: solo escalaciones ocurridas dentro del período
-      if (isInPeriod(conv.escalatedAt, start.getTime())) {
+      // Escalación: sólo las ocurridas dentro del rango
+      if (isInRange(conv.escalatedAt, startMs, endMs)) {
         escalatedCount++;
-        // First response time: escalatedAt → firstAgentResponseAt
+        const dKey = isoDate(toDate(conv.escalatedAt));
+        dayBucket(dKey).escalated++;
+
         const respMin = diffMin(conv.escalatedAt, conv.firstAgentResponseAt);
         if (respMin !== null && respMin >= 0 && respMin < 24 * 60) {
           firstResponseSamples.push(respMin);
           if (resolvedDept) deptBuckets[resolvedDept]._responseSamples.push(respMin);
+        }
+      }
+
+      // Resolución: sólo las ocurridas dentro del rango, separadas por si
+      // la conversación necesitó escalar en algún momento o no.
+      if (isInRange(conv.resolvedAt, startMs, endMs)) {
+        const dKey = isoDate(toDate(conv.resolvedAt));
+        if (conv.escalatedAt) {
+          resolvedByAgent++;
+          dayBucket(dKey).resolvedByAgent++;
+        } else {
+          resolvedByBot++;
+          dayBucket(dKey).resolvedByBot++;
         }
       }
 
@@ -139,28 +207,38 @@ router.get('/', async (req, res) => {
         labelMap[lbl] = (labelMap[lbl] ?? 0) + 1;
       }
 
-      const createdAt = toDate(conv.createdAt);
-      if (createdAt) {
-        const key = isoDate(createdAt);
-        dayMap[key] = (dayMap[key] ?? 0) + 1;
+      // Mensajes recibidos del cliente dentro del rango
+      for (const m of conv.messages ?? []) {
+        if (m.role !== 'user') continue;
+        const mDate = toDate(m.timestamp);
+        if (!mDate) continue;
+        const ms = mDate.getTime();
+        if (ms < startMs || ms > endMs) continue;
+        messagesReceived++;
+        dayBucket(isoDate(mDate)).received++;
       }
     }
 
-    // --- Trend ---
-    const days = period === 'day' ? 1 : period === 'week' ? 7 : 30;
+    // --- Desglose diario completo (incluye días en 0) ---
+    // `start` ya es medianoche ARG exacta (arMidnight en getPeriodRange), y
+    // Argentina no tiene horario de verano, así que sumar 86400000ms por día
+    // da siempre la siguiente medianoche ARG — sin usar setHours/setDate en
+    // el TZ del proceso, que es justo lo que causaba el desfase de día.
     const dailyTrend = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = isoDate(d);
-      dailyTrend.push({ date: key, count: dayMap[key] ?? 0 });
+    {
+      const totalDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+      for (let i = 0; i < totalDays; i++) {
+        const key = isoDate(new Date(start.getTime() + i * 86400000));
+        const b = dayMap[key] ?? { received: 0, resolvedByBot: 0, escalated: 0, resolvedByAgent: 0 };
+        dailyTrend.push({ date: key, ...b });
+      }
     }
 
     // --- Derived metrics ---
     const total = conversations.length;
-    const resolved = conversations.filter(c => isInPeriod(c.resolvedAt, start.getTime())).length;
-    const neverEscalatedCount = conversations.filter(c => !c.escalatedAt).length;
-    const botHandledPct = total > 0 ? Math.round((neverEscalatedCount / total) * 100) : 0;
+    const resolved = resolvedByBot + resolvedByAgent;
+    // % de las conversaciones RESUELTAS que el bot cerró sin derivar a un agente.
+    const botHandledPct = resolved > 0 ? Math.round((resolvedByBot / resolved) * 100) : 0;
     const pending = conversations.filter(c => {
       const s = c.status ?? 'bot';
       return s !== 'resolved' && s !== 'bot_archived';
@@ -203,8 +281,13 @@ router.get('/', async (req, res) => {
 
     res.json({
       period,
+      from: isoDate(start),
+      to: isoDate(end),
       total,
+      messagesReceived,
       resolved,
+      resolvedByBot,
+      resolvedByAgent,
       botResolutionRate: botHandledPct,
       pending,
       urgentCount,

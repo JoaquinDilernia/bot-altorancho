@@ -3,9 +3,10 @@ import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Stats.module.css';
 
 const PERIODS = [
-  { key: 'day',   label: 'Hoy' },
-  { key: 'week',  label: '7 días' },
-  { key: 'month', label: '30 días' },
+  { key: 'day',    label: 'Hoy' },
+  { key: 'week',   label: '7 días' },
+  { key: 'month',  label: '30 días' },
+  { key: 'custom', label: 'Personalizado' },
 ];
 
 const STATUS_META = {
@@ -25,6 +26,8 @@ const CHANNEL_META = {
   instagram: { label: 'Instagram', color: '#e1306c' },
 };
 
+const WEEKDAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
 function pct(a, b) { return b > 0 ? Math.round((a / b) * 100) : 0; }
 
 function fmtMin(min) {
@@ -35,23 +38,50 @@ function fmtMin(min) {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
-function barLabel(dateStr, period, idx, total) {
-  const d = new Date(dateStr + 'T12:00:00');
-  if (period === 'week')  return ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][d.getDay()];
-  if (period === 'month') return (idx % 5 === 0 || idx === total - 1) ? `${d.getDate()}/${d.getMonth()+1}` : '';
-  return 'Hoy';
+function fmtDate(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function fmtDateLong(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+  return `${WEEKDAYS[d.getDay()]} ${fmtDate(iso)}`;
+}
+
+function barLabel(dateStr, idx, total) {
+  if (total <= 1) return 'Hoy';
+  if (total <= 7) return WEEKDAYS[new Date(`${dateStr}T12:00:00`).getDay()];
+  const step = Math.ceil(total / 8);
+  return (idx % step === 0 || idx === total - 1) ? fmtDate(dateStr) : '';
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isoDaysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
 }
 
 export default function Stats() {
   const [period, setPeriod] = useState('week');
+  const [customFrom, setCustomFrom] = useState(isoDaysAgo(7));
+  const [customTo, setCustomTo]     = useState(todayIso());
   const [data, setData]     = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]   = useState(null);
 
   useEffect(() => {
+    if (period === 'custom' && (!customFrom || !customTo)) return;
+
     setLoading(true);
     setError(null);
-    authFetch(BASE_URL + `/api/stats?period=${period}`)
+    const qs = period === 'custom'
+      ? `period=custom&from=${customFrom}&to=${customTo}`
+      : `period=${period}`;
+    authFetch(BASE_URL + `/api/stats?${qs}`)
       .then(r => {
         if (!r.ok) throw new Error(`Error ${r.status} al cargar estadísticas`);
         return r.json();
@@ -59,7 +89,7 @@ export default function Stats() {
       .then(setData)
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, [period]);
+  }, [period, customFrom, customTo]);
 
   return (
     <div className={styles.page}>
@@ -68,16 +98,33 @@ export default function Stats() {
           <h1 className={styles.title}>Estadísticas</h1>
           <p className={styles.subtitle}>Rendimiento del bot y los agentes</p>
         </div>
-        <div className={styles.tabs}>
-          {PERIODS.map(p => (
-            <button
-              key={p.key}
-              onClick={() => setPeriod(p.key)}
-              className={`${styles.tab} ${period === p.key ? styles.tabActive : ''}`}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className={styles.headerControls}>
+          {period === 'custom' && (
+            <div className={styles.rangeInputs}>
+              <input
+                type="date" className={styles.dateInput} value={customFrom}
+                max={customTo}
+                onChange={e => setCustomFrom(e.target.value)}
+              />
+              <span className={styles.rangeSep}>–</span>
+              <input
+                type="date" className={styles.dateInput} value={customTo}
+                min={customFrom} max={todayIso()}
+                onChange={e => setCustomTo(e.target.value)}
+              />
+            </div>
+          )}
+          <div className={styles.tabs}>
+            {PERIODS.map(p => (
+              <button
+                key={p.key}
+                onClick={() => setPeriod(p.key)}
+                className={`${styles.tab} ${period === p.key ? styles.tabActive : ''}`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -89,18 +136,9 @@ export default function Stats() {
         <div className={styles.body}>
 
           {/* KPI Row 1: volumen */}
-          <div className={styles.kpiRow}>
-            <KpiCard title="Conversaciones" value={data.total} />
-            <KpiCard
-              title="Resueltas" value={data.resolved}
-              sub={`${pct(data.resolved, data.total)}% del total`}
-              accent="var(--color-status-resolved)"
-            />
-            <KpiCard
-              title="Bot autónomo" value={`${data.botResolutionRate}%`}
-              sub="sin intervención humana"
-              accent="var(--color-primary)"
-            />
+          <div className={styles.kpiRow4}>
+            <KpiCard title="Mensajes recibidos" value={data.messagesReceived} sub="de clientes" />
+            <KpiCard title="Conversaciones" value={data.total} sub="tocadas en el período" />
             <KpiCard
               title="Pendientes" value={data.pending}
               sub="activas sin resolver"
@@ -113,16 +151,46 @@ export default function Stats() {
             />
           </div>
 
-          {/* KPI Row 2: tiempos y SLA */}
-          <div className={styles.kpiRow3}>
+          {/* KPI Row 2: resolución */}
+          <div className={styles.kpiRow4}>
+            <KpiCard
+              title="Resueltas" value={data.resolved}
+              sub={`${pct(data.resolved, data.total)}% del total`}
+              accent="var(--color-status-resolved)"
+            />
+            <KpiCard
+              title="Resueltas por el bot" value={data.resolvedByBot}
+              sub="sin derivar a un agente"
+              accent="var(--color-primary)"
+            />
+            <KpiCard
+              title="Derivadas a agente" value={data.escalatedCount}
+              sub={`${data.escalationRate}% del total`}
+              accent="#8b5cf6"
+            />
+            <KpiCard
+              title="Resueltas por agente" value={data.resolvedByAgent}
+              sub="tras derivación"
+              accent="#8b5cf6"
+            />
+          </div>
+
+          {/* KPI Row 3: tasas y tiempos */}
+          <div className={styles.kpiRow4}>
+            <KpiCard
+              title="Bot autónomo" value={`${data.botResolutionRate}%`}
+              sub="de las resueltas, sin agente"
+              accent="var(--color-primary)"
+              hint={data.resolved === 0 ? 'Sin resueltas en el período' : undefined}
+            />
             <KpiCard
               title="Tasa de escalación" value={`${data.escalationRate}%`}
-              sub={`${data.escalatedCount} derivadas a humano`}
+              sub="del total de conversaciones"
               accent={data.escalationRate > 40 ? 'var(--color-status-urgent)' : '#8b5cf6'}
             />
             <KpiCard
               title="1ª respuesta (prom.)" value={fmtMin(data.avgFirstResponseMin)}
-              sub="desde escalación hasta respuesta del agente"
+              sub="desde escalación hasta respuesta"
               accent={
                 data.avgFirstResponseMin === null ? undefined :
                 data.avgFirstResponseMin > 30 ? 'var(--color-status-urgent)' :
@@ -138,12 +206,36 @@ export default function Stats() {
             />
           </div>
 
-          {/* Trend */}
+          {/* Daily breakdown: chart + table */}
           <section className={styles.section}>
             <h2 className={styles.sectionTitle}>
-              Actividad {period === 'day' ? 'de hoy' : period === 'week' ? 'últimos 7 días' : 'últimos 30 días'}
+              Mensajes recibidos por día{data.from && data.to ? ` (${fmtDate(data.from)} – ${fmtDate(data.to)})` : ''}
             </h2>
-            <TrendChart data={data.dailyTrend} period={period} />
+            <TrendChart data={data.dailyTrend} />
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>Día</th>
+                    <th>Mensajes recibidos</th>
+                    <th>Resueltas por bot</th>
+                    <th>Derivadas a agente</th>
+                    <th>Resueltas por agente</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.dailyTrend.map(d => (
+                    <tr key={d.date}>
+                      <td>{fmtDateLong(d.date)}</td>
+                      <td>{d.received}</td>
+                      <td>{d.resolvedByBot}</td>
+                      <td>{d.escalated}</td>
+                      <td>{d.resolvedByAgent}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           {/* By agent + by status */}
@@ -264,22 +356,22 @@ function KpiCard({ title, value, sub, accent, hint }) {
 
 const CHART_H = 80;
 
-function TrendChart({ data, period }) {
-  const max = Math.max(...data.map(d => d.count), 1);
+function TrendChart({ data }) {
+  const max = Math.max(...data.map(d => d.received), 1);
   return (
     <div className={styles.trendChart}>
       {data.map((d, i) => {
-        const h = Math.round((d.count / max) * CHART_H);
+        const h = Math.round((d.received / max) * CHART_H);
         return (
           <div key={d.date} className={styles.trendCol}>
-            <span className={styles.trendCount}>{d.count > 0 ? d.count : ''}</span>
+            <span className={styles.trendCount}>{d.received > 0 ? d.received : ''}</span>
             <div className={styles.trendBarWrap}>
               <div
                 className={styles.trendBar}
-                style={{ height: `${Math.max(h, d.count > 0 ? 3 : 0)}px` }}
+                style={{ height: `${Math.max(h, d.received > 0 ? 3 : 0)}px` }}
               />
             </div>
-            <span className={styles.trendLabel}>{barLabel(d.date, period, i, data.length)}</span>
+            <span className={styles.trendLabel}>{barLabel(d.date, i, data.length)}</span>
           </div>
         );
       })}
