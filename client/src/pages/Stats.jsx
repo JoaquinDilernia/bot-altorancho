@@ -137,7 +137,7 @@ export default function Stats() {
 
           {/* KPI Row 1: volumen */}
           <div className={styles.kpiRow4}>
-            <KpiCard title="Mensajes recibidos" value={data.messagesReceived} sub="de clientes" />
+            <KpiCard title="Conversaciones nuevas" value={data.conversationsStarted} sub="iniciadas en el período" />
             <KpiCard title="Conversaciones" value={data.total} sub="tocadas en el período" />
             <KpiCard
               title="Pendientes" value={data.pending}
@@ -209,7 +209,7 @@ export default function Stats() {
           {/* Daily breakdown: chart + table */}
           <section className={styles.section}>
             <h2 className={styles.sectionTitle}>
-              Mensajes recibidos por día{data.from && data.to ? ` (${fmtDate(data.from)} – ${fmtDate(data.to)})` : ''}
+              Conversaciones nuevas por día{data.from && data.to ? ` (${fmtDate(data.from)} – ${fmtDate(data.to)})` : ''}
             </h2>
             <TrendChart data={data.dailyTrend} />
             <div className={styles.tableWrap}>
@@ -217,7 +217,7 @@ export default function Stats() {
                 <thead>
                   <tr>
                     <th>Día</th>
-                    <th>Mensajes recibidos</th>
+                    <th>Conversaciones nuevas</th>
                     <th>Resueltas por bot</th>
                     <th>Derivadas a agente</th>
                     <th>Resueltas por agente</th>
@@ -227,7 +227,7 @@ export default function Stats() {
                   {data.dailyTrend.map(d => (
                     <tr key={d.date}>
                       <td>{fmtDateLong(d.date)}</td>
-                      <td>{d.received}</td>
+                      <td>{d.started}</td>
                       <td>{d.resolvedByBot}</td>
                       <td>{d.escalated}</td>
                       <td>{d.resolvedByAgent}</td>
@@ -357,18 +357,18 @@ function KpiCard({ title, value, sub, accent, hint }) {
 const CHART_H = 80;
 
 function TrendChart({ data }) {
-  const max = Math.max(...data.map(d => d.received), 1);
+  const max = Math.max(...data.map(d => d.started), 1);
   return (
     <div className={styles.trendChart}>
       {data.map((d, i) => {
-        const h = Math.round((d.received / max) * CHART_H);
+        const h = Math.round((d.started / max) * CHART_H);
         return (
           <div key={d.date} className={styles.trendCol}>
-            <span className={styles.trendCount}>{d.received > 0 ? d.received : ''}</span>
+            <span className={styles.trendCount}>{d.started > 0 ? d.started : ''}</span>
             <div className={styles.trendBarWrap}>
               <div
                 className={styles.trendBar}
-                style={{ height: `${Math.max(h, d.received > 0 ? 3 : 0)}px` }}
+                style={{ height: `${Math.max(h, d.started > 0 ? 3 : 0)}px` }}
               />
             </div>
             <span className={styles.trendLabel}>{barLabel(d.date, i, data.length)}</span>

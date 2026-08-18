@@ -136,15 +136,15 @@ router.get('/', async (req, res) => {
     const byChannel = { whatsapp: 0, instagram: 0 };
     const labelMap  = {};
 
-    // Desglose diario: mensajes recibidos, resueltas por bot/agente, derivadas
+    // Desglose diario: conversaciones nuevas, resueltas por bot/agente, derivadas
     const dayMap = {};
     function dayBucket(key) {
-      if (!dayMap[key]) dayMap[key] = { received: 0, resolvedByBot: 0, escalated: 0, resolvedByAgent: 0 };
+      if (!dayMap[key]) dayMap[key] = { started: 0, resolvedByBot: 0, escalated: 0, resolvedByAgent: 0 };
       return dayMap[key];
     }
 
     let escalatedCount = 0;
-    let messagesReceived = 0;
+    let conversationsStarted = 0;
     let resolvedByBot = 0;
     let resolvedByAgent = 0;
     const firstResponseSamples = [];
@@ -207,15 +207,10 @@ router.get('/', async (req, res) => {
         labelMap[lbl] = (labelMap[lbl] ?? 0) + 1;
       }
 
-      // Mensajes recibidos del cliente dentro del rango
-      for (const m of conv.messages ?? []) {
-        if (m.role !== 'user') continue;
-        const mDate = toDate(m.timestamp);
-        if (!mDate) continue;
-        const ms = mDate.getTime();
-        if (ms < startMs || ms > endMs) continue;
-        messagesReceived++;
-        dayBucket(isoDate(mDate)).received++;
+      // Conversaciones nuevas: sólo las iniciadas dentro del rango
+      if (isInRange(conv.createdAt, startMs, endMs)) {
+        conversationsStarted++;
+        dayBucket(isoDate(toDate(conv.createdAt))).started++;
       }
     }
 
@@ -229,7 +224,7 @@ router.get('/', async (req, res) => {
       const totalDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
       for (let i = 0; i < totalDays; i++) {
         const key = isoDate(new Date(start.getTime() + i * 86400000));
-        const b = dayMap[key] ?? { received: 0, resolvedByBot: 0, escalated: 0, resolvedByAgent: 0 };
+        const b = dayMap[key] ?? { started: 0, resolvedByBot: 0, escalated: 0, resolvedByAgent: 0 };
         dailyTrend.push({ date: key, ...b });
       }
     }
@@ -284,7 +279,7 @@ router.get('/', async (req, res) => {
       from: isoDate(start),
       to: isoDate(end),
       total,
-      messagesReceived,
+      conversationsStarted,
       resolved,
       resolvedByBot,
       resolvedByAgent,
