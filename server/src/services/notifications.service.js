@@ -22,7 +22,7 @@ const PICKUP_FIELDS = 'id,number,status,payment_status,shipping_status,shipping_
 // Branch keywords from the actual TiendaNube shipping option names
 const BRANCH_KEYWORDS = ['SAN ISIDRO', 'BELGRANO', 'ALCORTA', 'NORDELTA', 'ALTORANCHO'];
 
-function normalizePhone(raw) {
+export function normalizePhone(raw) {
   if (!raw) return null;
   let d = String(raw).trim().replace(/[^\d]/g, '');
   if (!d) return null;

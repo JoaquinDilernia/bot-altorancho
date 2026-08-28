@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import cron from 'node-cron';
 
 import webhookRoutes from './routes/webhook.routes.js';
+import simpliRouteRoutes from './routes/simpliroute.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
 import conversationRoutes from './routes/conversation.routes.js';
 import configRoutes from './routes/config.routes.js';
@@ -71,6 +72,7 @@ app.use(express.json());
 
 // Routes (public)
 app.use('/api/webhook', webhookRoutes);
+app.use('/api/simpliroute-webhook', simpliRouteRoutes);
 app.use('/api/auth', authRoutes);
 
 // Routes (protected)
