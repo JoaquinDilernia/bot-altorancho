@@ -9,7 +9,10 @@ const HISTORY_COLLECTION = 'bot-altorancho_simpliroute_notifications';
 
 // Plantillas de WhatsApp que dispara este webhook — deben existir y estar
 // aprobadas en Meta (panel de Notificaciones) antes de que esto pueda enviar.
-const TEMPLATE_ON_ROUTE = 'pedido_en_camino';
+// v2: la primera ("pedido_en_camino") quedó atascada en PENDING en Meta
+// varias horas más que sus hermanas del mismo lote — se recreó sin emoji
+// bajo otro nombre técnico en vez de esperarla indefinidamente.
+const TEMPLATE_ON_ROUTE = 'pedido_en_camino_v2';
 const TEMPLATE_DELIVERED = 'pedido_entregado';
 const TEMPLATE_FAILED = 'pedido_no_entregado';
 
