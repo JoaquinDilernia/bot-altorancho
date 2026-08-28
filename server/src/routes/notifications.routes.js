@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { getPickupOrders, sendBulkOrders, getNotificationHistory } from '../services/notifications.service.js';
+import { getSimpliRouteNotificationHistory } from '../services/simpliroute.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -41,6 +42,17 @@ router.post('/send-bulk', async (req, res) => {
 router.get('/history', async (req, res) => {
   try {
     const history = await getNotificationHistory();
+    res.json({ history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/notifications/simpliroute-history — envíos automáticos disparados
+// por los webhooks de SimpliRoute (en ruta / entregado / no entregado)
+router.get('/simpliroute-history', async (req, res) => {
+  try {
+    const history = await getSimpliRouteNotificationHistory();
     res.json({ history });
   } catch (err) {
     res.status(500).json({ error: err.message });

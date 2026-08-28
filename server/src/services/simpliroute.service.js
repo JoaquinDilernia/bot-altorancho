@@ -1,8 +1,11 @@
 import crypto from 'crypto';
+import { getDb } from './firebase.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
 import { findOrder } from './tiendanube.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus, markNotified } from './conversation.service.js';
 import { normalizePhone } from './notifications.service.js';
+
+const HISTORY_COLLECTION = 'bot-altorancho_simpliroute_notifications';
 
 // Plantillas de WhatsApp que dispara este webhook — deben existir y estar
 // aprobadas en Meta (panel de Notificaciones) antes de que esto pueda enviar.
@@ -78,23 +81,38 @@ function extractStatus(payload) {
   return status ? String(status).toLowerCase() : null;
 }
 
+// Deja registro de cada intento de notificación (enviado, error u omitido)
+// para el módulo de Historial — sin esto, un pedido que falla en silencio
+// (sin teléfono, no encontrado en TiendaNube) no queda rastreable.
+async function logSimpliRouteNotification(entry) {
+  try {
+    await getDb().collection(HISTORY_COLLECTION).add({ sentAt: new Date(), ...entry });
+  } catch (err) {
+    console.error('[simpliroute] Error guardando historial:', err.message);
+  }
+}
+
 // Envía la plantilla correspondiente al cliente de un pedido. Reutilizado
 // tanto por el checkout (un pedido) como por el inicio de ruta (N pedidos).
-async function notifyOrder(orderNumber, templateName) {
+async function notifyOrder(orderNumber, templateName, event) {
+  const base = { event, templateName, orderNumber };
+
   const order = await findOrder(orderNumber);
   if (!order) {
     console.warn(`[simpliroute] Pedido #${orderNumber} no encontrado en TiendaNube — no se puede notificar`);
+    await logSimpliRouteNotification({ ...base, status: 'skipped', reason: 'Pedido no encontrado en TiendaNube' });
     return;
   }
 
   const phone = normalizePhone(order.customer?.phone ?? '');
+  const customerName = order.customer?.name ?? null;
   if (!phone) {
     console.warn(`[simpliroute] Pedido #${orderNumber} sin teléfono de cliente — no se puede notificar`);
+    await logSimpliRouteNotification({ ...base, status: 'skipped', reason: 'Sin teléfono', customerName });
     return;
   }
 
   const bodyParams = [String(order.number)];
-  const customerName = order.customer?.name ?? null;
 
   // Mismo patrón que sendBulkOrders (notifications.service.js): dejar
   // rastro en la conversación del cliente antes de mandar por Meta, para
@@ -121,8 +139,11 @@ async function notifyOrder(orderNumber, templateName) {
 
     await markNotified(phone);
     console.log(`[simpliroute] "${templateName}" enviado a ${phone} por pedido #${order.number}`);
+    await logSimpliRouteNotification({ ...base, status: 'sent', customerName, phone, waMsgId });
   } catch (err) {
-    console.error(`[simpliroute] Error notificando pedido #${order.number}:`, err.response?.data?.error?.message ?? err.message);
+    const reason = err.response?.data?.error?.message ?? err.message;
+    console.error(`[simpliroute] Error notificando pedido #${order.number}:`, reason);
+    await logSimpliRouteNotification({ ...base, status: 'error', customerName, phone, reason });
   }
 }
 
@@ -145,7 +166,7 @@ export async function handleSimpliRouteCheckout(payload) {
     return;
   }
 
-  await notifyOrder(orderNumber, isSuccess ? TEMPLATE_DELIVERED : TEMPLATE_FAILED);
+  await notifyOrder(orderNumber, isSuccess ? TEMPLATE_DELIVERED : TEMPLATE_FAILED, 'checkout');
 }
 
 // Evento "Inicio de ruta": el conductor arrancó el reparto del día — trae
@@ -169,7 +190,18 @@ export async function handleSimpliRouteRouteStart(payload) {
       console.warn('[simpliroute] inicio de ruta: visita sin número de pedido identificable:', JSON.stringify(visit));
       continue;
     }
-    await notifyOrder(orderNumber, TEMPLATE_ON_ROUTE);
+    await notifyOrder(orderNumber, TEMPLATE_ON_ROUTE, 'route_start');
     await new Promise(r => setTimeout(r, 200)); // margen para no ráfagar la API de Meta
   }
+}
+
+// Últimos envíos disparados por SimpliRoute (enviados, con error, u
+// omitidos), para el módulo de Historial.
+export async function getSimpliRouteNotificationHistory(limit = 100) {
+  const snap = await getDb().collection(HISTORY_COLLECTION).orderBy('sentAt', 'desc').limit(limit).get();
+  return snap.docs.map(d => ({
+    id: d.id,
+    ...d.data(),
+    sentAt: d.data().sentAt?.toDate?.()?.toISOString() ?? d.data().sentAt,
+  }));
 }
