@@ -257,7 +257,7 @@ function MessageBubble({ msg, onRetry, contactId }) {
         )}
       </div>
       <span className={styles.msgMeta}>
-        {isUser ? 'Cliente' : isAdmin ? 'Agente' : 'Alto'}
+        {isUser ? 'Cliente' : isAdmin ? (msg.agentName || 'Agente') : 'Alto'}
         {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
         {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} />}
       </span>
