@@ -20,7 +20,6 @@ const STATUS_FILTER_OPTIONS = [
 const BRANCH_ORDER = ['Belgrano', 'San Isidro', 'Alcorta'];
 
 export default function Notifications() {
-  const [tab, setTab] = useState('manual');
   const [orders, setOrders]             = useState([]);
   const [templates, setTemplates]       = useState([]);
   const [loading, setLoading]           = useState(false);
@@ -219,39 +218,14 @@ export default function Notifications() {
     <div className={styles.page}>
       <header className={styles.header}>
         <div>
-          <h1 className={styles.title}>Notificaciones</h1>
-          <p className={styles.subtitle}>
-            {tab === 'manual'
-              ? 'Enviá templates de WhatsApp a pedidos con retiro en local'
-              : 'Envíos automáticos disparados por SimpliRoute (en ruta / entregado / no entregado)'}
-          </p>
+          <h1 className={styles.title}>Notificaciones masivas</h1>
+          <p className={styles.subtitle}>Enviá templates de WhatsApp a pedidos con retiro en local</p>
         </div>
-        {tab === 'manual' && (
-          <button className={styles.btnFetch} onClick={fetchOrders} disabled={loading}>
-            {loading ? 'Actualizando…' : '↻ Actualizar'}
-          </button>
-        )}
+        <button className={styles.btnFetch} onClick={fetchOrders} disabled={loading}>
+          {loading ? 'Actualizando…' : '↻ Actualizar'}
+        </button>
       </header>
 
-      <div className={styles.tabRow}>
-        <button
-          className={`${styles.tabBtn} ${tab === 'manual' ? styles.tabBtnActive : ''}`}
-          onClick={() => setTab('manual')}
-        >
-          Envío manual
-        </button>
-        <button
-          className={`${styles.tabBtn} ${tab === 'historial' ? styles.tabBtnActive : ''}`}
-          onClick={() => setTab('historial')}
-        >
-          Historial SimpliRoute
-        </button>
-      </div>
-
-      {tab === 'historial' ? (
-        <SimpliRouteHistory />
-      ) : (
-        <>
       {/* Seguimiento automático de retiro */}
       <div className={styles.followupCard}>
         <div className={styles.followupHeader}>
@@ -501,96 +475,6 @@ export default function Notifications() {
           </div>
         )}
       </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-const EVENT_LABELS = {
-  route_start: 'En ruta',
-  checkout: 'Checkout',
-};
-
-function SimpliRouteHistory() {
-  const [history, setHistory] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError]     = useState('');
-
-  useEffect(() => { load(); }, []);
-
-  async function load() {
-    setLoading(true);
-    setError('');
-    try {
-      const r = await authFetch(BASE_URL + '/api/notifications/simpliroute-history');
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error);
-      setHistory(data.history ?? []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className={styles.branchArea}>
-      <div className={styles.statusFilterRow} style={{ padding: 0, marginBottom: 'var(--space-3)' }}>
-        <button className={styles.btnFetch} onClick={load} disabled={loading}>
-          {loading ? 'Actualizando…' : '↻ Actualizar'}
-        </button>
-        {error && <div className={styles.errorBanner}>{error}</div>}
-      </div>
-
-      {loading ? (
-        <p className={styles.emptyFilter}>Cargando historial…</p>
-      ) : history.length === 0 ? (
-        <div className={styles.emptyState}>
-          <span className={styles.emptyIcon}>📭</span>
-          <p>Todavía no se disparó ningún envío automático desde SimpliRoute.</p>
-        </div>
-      ) : (
-        <div className={styles.branchSection}>
-          <div className={styles.tableWrap}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Evento</th>
-                  <th>Pedido</th>
-                  <th>Cliente</th>
-                  <th>Teléfono</th>
-                  <th>Plantilla</th>
-                  <th>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map(h => (
-                  <tr key={h.id} className={h.status ? styles[`row_${h.status}`] : ''}>
-                    <td>{h.sentAt ? new Date(h.sentAt).toLocaleString('es-AR') : '—'}</td>
-                    <td>{EVENT_LABELS[h.event] ?? h.event ?? '—'}</td>
-                    <td className={styles.orderNum}>#{h.orderNumber}</td>
-                    <td>{h.customerName ?? '—'}</td>
-                    <td className={styles.phone}>
-                      {h.phone
-                        ? <span className={styles.phoneOk}>{h.phone}</span>
-                        : <span className={styles.phoneMissing}>—</span>
-                      }
-                    </td>
-                    <td>{h.templateName}</td>
-                    <td>
-                      <span className={`${styles.resultBadge} ${styles[`result_${h.status}`]}`}>
-                        {h.status === 'sent' ? '✓ Enviado' : h.status === 'error' ? `✗ ${h.reason}` : `— ${h.reason ?? 'Omitido'}`}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

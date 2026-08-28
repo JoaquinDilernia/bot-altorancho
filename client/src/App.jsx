@@ -16,6 +16,7 @@ import Templates     from './pages/Templates.jsx';
 import Costs         from './pages/Costs.jsx';
 import Departments   from './pages/Departments.jsx';
 import Notifications from './pages/Notifications.jsx';
+import SimpliRouteHistory from './pages/SimpliRouteHistory.jsx';
 import Users         from './pages/Users.jsx';
 
 export default function App() {
@@ -52,6 +53,7 @@ function AppRoutes() {
           <Route path="costs"         element={<Costs />} />
           <Route path="departments"   element={<Departments />} />
           <Route path="notifications" element={<Notifications />} />
+          <Route path="simpliroute-history" element={<SimpliRouteHistory />} />
           <Route path="users"         element={<Users />} />
         </Route>
       </Routes>

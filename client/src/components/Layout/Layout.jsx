@@ -28,6 +28,7 @@ const NAV_ITEMS = [
   { to: '/stats',         label: 'Estadísticas',    icon: IconChart,      minRole: 'atencion_cliente' },
   { to: '/knowledge',     label: 'Knowledge Base',  icon: IconBook,       minRole: 'atencion_cliente' },
   { to: '/notifications', label: 'Notificaciones',  icon: IconBell },
+  { to: '/simpliroute-history', label: 'SimpliRoute', icon: IconTruck },
   { to: '/departments',   label: 'Departamentos',   icon: IconDepartment, minRole: 'atencion_cliente' },
   { to: '/labels',        label: 'Etiquetas',       icon: IconTag,        minRole: 'atencion_cliente' },
   { to: '/quick-replies', label: 'Resp. Rápidas',   icon: IconZap,        minRole: 'atencion_cliente' },
@@ -227,6 +228,17 @@ function IconBell({ className }) {
     <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
       <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+    </svg>
+  );
+}
+
+function IconTruck({ className }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1" y="3" width="15" height="13" />
+      <path d="M16 8h4l3 3v5h-7V8z" />
+      <circle cx="5.5" cy="18.5" r="2.5" />
+      <circle cx="18.5" cy="18.5" r="2.5" />
     </svg>
   );
 }
