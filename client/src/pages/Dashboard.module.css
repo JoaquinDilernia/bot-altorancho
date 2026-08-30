@@ -87,11 +87,22 @@
   letter-spacing: 0.6px;
 }
 
+.statSub {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-faint);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  margin-top: -4px;
+}
+
 /* Accent = left border + icon tint */
 .accent_primary   { border-left-color: var(--color-primary); }
 .accent_bot       { border-left-color: var(--color-status-bot); }
 .accent_escalated { border-left-color: var(--color-status-escalated); }
 .accent_resolved  { border-left-color: var(--color-success); }
+.accent_urgent    { border-left-color: var(--color-status-urgent); }
 .accent_whatsapp  { border-left-color: var(--color-whatsapp-dark); }
 .accent_instagram { border-left-color: var(--color-instagram); }
 
@@ -99,6 +110,7 @@
 .accent_bot       .statIcon { color: var(--color-status-bot); }
 .accent_escalated .statIcon { color: var(--color-status-escalated); }
 .accent_resolved  .statIcon { color: var(--color-success); }
+.accent_urgent    .statIcon { color: var(--color-status-urgent); }
 .accent_whatsapp  .statIcon { color: var(--color-whatsapp-dark); }
 .accent_instagram .statIcon { color: var(--color-instagram); }
 

@@ -161,9 +161,16 @@ export async function dispatchConversation(contactId, patch) {
 
   if (patch.status !== undefined) {
     update.status = patch.status;
-    if ((patch.status === 'resolved' || patch.status === 'bot_archived') && !current.resolvedAt) {
+    const wasAlreadyClosed = ['resolved', 'bot_archived'].includes(current.status);
+    if ((patch.status === 'resolved' || patch.status === 'bot_archived') && !wasAlreadyClosed) {
       update.resolvedAt = new Date();
       update.waitingSince = null;
+      // Quién tenía la conversación asignada AL MOMENTO de cerrarla — se
+      // guarda aparte porque el patch de cierre (ej. bot_archive) suele
+      // resetear assignedTo a null en el mismo update, y las estadísticas
+      // de "por agente/depto" necesitan saber quién la cerró, no que quedó
+      // sin asignar. Sin esto, todo cierre manual se atribuye a "Bot".
+      update.resolvedBy = current.assignedTo ?? null;
     }
   }
   if (patch.humanMode !== undefined) {

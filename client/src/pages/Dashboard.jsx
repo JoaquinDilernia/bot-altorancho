@@ -4,6 +4,14 @@ import { authFetch, BASE_URL } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import styles from './Dashboard.module.css';
 
+function fmtWaitTime(min) {
+  if (min == null) return null;
+  if (min < 60) return `${Math.round(min)}m`;
+  const hours = min / 60;
+  if (hours < 24) return `${Math.round(hours)}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
 function timeAgo(val) {
   if (!val) return '';
   const d = val?.seconds ? new Date(val.seconds * 1000) : new Date(val);
@@ -79,21 +87,34 @@ export default function Dashboard() {
       ) : (
         <>
           <div className={styles.statsGrid}>
-            <StatCard icon={<IconMessages />} label="Hoy" value={stats?.total ?? 0} accent="primary" />
-            <StatCard icon={<IconClock />}    label="Pendientes" value={stats?.byStatus?.bot ?? 0} accent="bot" />
-            <StatCard icon={<IconArrow />}    label="Derivadas" value={stats?.byStatus?.escalated ?? 0} accent="escalated" />
-            <StatCard icon={<IconCheck />}    label="Resueltas" value={stats?.byStatus?.resolved ?? 0} accent="resolved" />
+            <StatCard icon={<IconMessages />} label="Conversaciones hoy" value={stats?.total ?? 0} accent="primary" />
+            <StatCard
+              icon={<IconCheck />} label="Resueltas hoy" value={stats?.resolved ?? 0} accent="resolved"
+              sub={stats?.resolved ? `${stats.resolvedByBot} bot · ${stats.resolvedByAgent} agente` : undefined}
+            />
+            <StatCard
+              icon={<IconArrow />} label="Esperando agente" value={stats?.awaitingAgent ?? 0}
+              accent={stats?.awaitingAgent > 0 ? 'urgent' : 'escalated'}
+              sub={stats?.oldestAwaitingMin != null ? `la más vieja espera hace ${fmtWaitTime(stats.oldestAwaitingMin)}` : undefined}
+            />
+            <StatCard icon={<IconClock />}    label="Bot activo" value={stats?.byStatus?.bot ?? 0} accent="bot" />
             <StatCard icon={<IconWpp />}      label="WhatsApp" value={stats?.byChannel?.whatsapp ?? 0} accent="whatsapp" />
             <StatCard icon={<IconIg />}       label="Instagram" value={stats?.byChannel?.instagram ?? 0} accent="instagram" />
           </div>
 
-          {stats?.botResolutionRate != null && (
+          {stats?.resolved > 0 ? (
             <div className={styles.rateBar}>
-              <span className={styles.rateLabel}>El bot resolvió sin escalar</span>
+              <span className={styles.rateLabel}>
+                De las {stats.resolved} resueltas hoy, el bot cerró {stats.resolvedByBot} sin ayuda de un agente
+              </span>
               <div className={styles.barTrack}>
                 <div className={styles.barFill} style={{ width: `${stats.botResolutionRate}%` }} />
               </div>
               <span className={styles.rateValue}>{stats.botResolutionRate}%</span>
+            </div>
+          ) : (
+            <div className={styles.rateBar}>
+              <span className={styles.rateLabel}>Todavía no se resolvió ninguna conversación hoy</span>
             </div>
           )}
 
@@ -123,12 +144,13 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ icon, label, value, accent }) {
+function StatCard({ icon, label, value, accent, sub }) {
   return (
     <div className={`${styles.statCard} ${styles[`accent_${accent}`]}`}>
       <div className={styles.statIcon}>{icon}</div>
       <span className={styles.statValue}>{value}</span>
       <span className={styles.statLabel}>{label}</span>
+      {sub && <span className={styles.statSub}>{sub}</span>}
     </div>
   );
 }

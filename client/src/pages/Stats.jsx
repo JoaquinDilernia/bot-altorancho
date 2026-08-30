@@ -140,9 +140,9 @@ export default function Stats() {
             <KpiCard title="Conversaciones nuevas" value={data.conversationsStarted} sub="iniciadas en el período" />
             <KpiCard title="Conversaciones" value={data.total} sub="tocadas en el período" />
             <KpiCard
-              title="Pendientes" value={data.pending}
-              sub="activas sin resolver"
-              accent={data.pending > 0 ? 'var(--color-status-urgent)' : undefined}
+              title="Esperando agente" value={data.awaitingAgent}
+              sub={data.oldestAwaitingMin != null ? `la más vieja hace ${fmtMin(data.oldestAwaitingMin)}` : 'ahora mismo, no acotado al período'}
+              accent={data.awaitingAgent > 0 ? 'var(--color-status-urgent)' : undefined}
             />
             <KpiCard
               title="Urgentes" value={data.urgentCount}
@@ -179,7 +179,7 @@ export default function Stats() {
           <div className={styles.kpiRow4}>
             <KpiCard
               title="Bot autónomo" value={`${data.botResolutionRate}%`}
-              sub="de las resueltas, sin agente"
+              sub={data.resolved > 0 ? `${data.resolvedByBot} de ${data.resolved} resueltas, sin agente` : undefined}
               accent="var(--color-primary)"
               hint={data.resolved === 0 ? 'Sin resueltas en el período' : undefined}
             />
