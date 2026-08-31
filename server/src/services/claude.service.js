@@ -1,8 +1,8 @@
 import https from 'https';
 import { getDb } from './firebase.service.js';
 
-const MODEL = 'claude-sonnet-4-6';
-const PRICING = { inputPerMTok: 3.00, outputPerMTok: 15.00 };
+const MODEL = 'claude-sonnet-5';
+const PRICING = { inputPerMTok: 2.00, outputPerMTok: 10.00 };
 
 function logUsage(usage, type) {
   if (!usage?.input_tokens) return;
