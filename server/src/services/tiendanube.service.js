@@ -235,8 +235,15 @@ export async function getOrderById(orderId) {
  */
 export async function searchProducts(query) {
   try {
+    // NOTA 2026-09-01: 'price' y 'stock' NO son campos válidos para este
+    // endpoint (TiendaNube devuelve 422 "Invalid fields for this resource")
+    // — viven dentro de cada variant, no a nivel producto. Este bug estaba
+    // ANTES de agregar 'description' (probado con y sin) y hacía que esta
+    // función fallara en silencio (catch de abajo) para TODA búsqueda por
+    // nombre, no solo las de ficha técnica — afectaba también al lookup de
+    // stock por nombre en resolveStockContext.
     const { data } = await client.get('/products', {
-      params: { q: query, published: true, fields: 'id,name,price,stock,images,variants' },
+      params: { q: query, published: true, fields: 'id,name,description,images,variants' },
     });
     return data ?? [];
   } catch (err) {

@@ -153,9 +153,9 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
+  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, customerContext, availableLabels, departments);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, departments);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -169,7 +169,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return extractText(response);
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, customerContext, availableLabels = [], departments = []) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], departments = []) {
   const botName = botConfig.botName || 'Asistente';
   const businessName = botConfig.businessName || 'Alto Rancho';
   const personality = botConfig.botPersonality ||
@@ -232,6 +232,10 @@ IMPORTANTE — Local Alcorta:
 - Alcorta NO es un local tradicional: es un stand de iluminación (Light Studio) dentro de un shopping.
 - Se puede comprar cualquier producto con disponibilidad en Alcorta, pero NO se puede ver ni probar en persona (a menos que sea un producto de iluminación o esté exhibido).
 - Cuando haya disponibilidad en Alcorta para un producto no relacionado con iluminación, avisale al cliente que puede comprarlo allí pero que no va a poder verlo en persona.`;
+  }
+  if (productInfo) {
+    prompt += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;
+    prompt += `\n\nUsá esta ficha para responder preguntas sobre material, medidas, armado o cuidados del producto. Si la descripción no cubre lo que te preguntan, decilo honestamente en vez de inventar — no asumas materiales, medidas ni instrucciones que no estén acá.`;
   }
   if (availableLabels.length) {
     prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).

@@ -61,6 +61,47 @@ const STOCK_PATTERNS = [
   /en\s+(?:la\s+)?tienda/i,
 ];
 
+// Preguntas de ficha técnica (material, medidas, armado) — distinto de
+// STOCK_PATTERNS, que es sobre disponibilidad. Agregado 2026-09-01 tras ver
+// que "Consulta producto" era la etiqueta de escalada más común de agosto:
+// el cliente pregunta algo que SÍ está en la descripción de TiendaNube
+// (material, medidas, si viene armado) pero el bot no la consultaba.
+const PRODUCT_INFO_PATTERNS = [
+  /\bmaterial(es)?\b/i,
+  /\bmadera\b/i,
+  /\btela\b/i,
+  /\bmedidas?\b/i,
+  /\bmide\b/i,
+  /\barmad[oa]s?\b/i,
+  /\bse arma\b/i,
+  /\btutorial\b/i,
+  /\bficha t[eé]cnica\b/i,
+];
+
+// La búsqueda `q=` de TiendaNube matchea contra el nombre del producto, no
+// hace fuzzy/semántico — con una oración completa ("de qué material es la
+// consola nova celeste?") no encuentra nada, pero con solo "consola nova
+// celeste" sí. Se filtran preguntas/muletillas comunes para quedarnos con
+// lo que probablemente sea el nombre del producto. Best-effort: si queda
+// vacío, se usa el texto original tal cual (no empeora lo que ya había).
+const QUERY_STOPWORDS = new Set([
+  'hola', 'buenas', 'buen', 'buenos', 'dia', 'día', 'dias', 'días', 'tardes', 'noches',
+  'de', 'del', 'que', 'qué', 'es', 'son', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas',
+  'tiene', 'tienen', 'viene', 'vienen', 'se', 'arma', 'armada', 'armado', 'armadas', 'armados',
+  'o', 'hay', 'y', 'con', 'para', 'como', 'cuál', 'cual', 'cuáles', 'cuales', 'cuanto', 'cuánto',
+  'mide', 'medidas', 'medida', 'material', 'materiales', 'madera', 'tela',
+  'porfavor', 'favor', 'por', 'me', 'podes', 'podés', 'puedes', 'decir', 'decime',
+  'saber', 'queria', 'quería', 'quiero', 'consulta', 'pregunta', 'gustaria', 'gustaría',
+]);
+function cleanProductQuery(text) {
+  const words = (text ?? '')
+    .replace(/[¿?¡!.,]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w && !QUERY_STOPWORDS.has(w.toLowerCase()));
+  const cleaned = words.join(' ').trim();
+  return cleaned || text;
+}
+
 // SKU propio: letras + dígitos + letras (ej: IME054CH, DOF126RS). El dígito en
 // el medio lo distingue de una palabra común, así que alcanza como señal de
 // intención aunque el mensaje no traiga ninguna palabra clave de stock — pasa
@@ -524,9 +565,10 @@ async function processIncomingMessageInternal(msg) {
     ? (Date.now() - (conversation.updatedAt._seconds ? conversation.updatedAt._seconds * 1000 : new Date(conversation.updatedAt).getTime())) < TEN_DAYS_MS
     : false;
 
-  const [orderContext, stockInfo] = await Promise.all([
+  const [orderContext, stockInfo, productInfo] = await Promise.all([
     resolveOrderContext(text ?? '', customer, conversation, from),
     resolveStockContext(text ?? ''),
+    resolveProductInfoContext(text ?? ''),
   ]);
   const customerContext = buildCustomerContext(customer);
 
@@ -559,6 +601,7 @@ async function processIncomingMessageInternal(msg) {
       orderInfo: orderContext.orderInfo,
       orderRef: orderContext.orderRef,
       stockInfo,
+      productInfo,
       customerContext,
       availableLabels: availableLabels.map(l => l.name),
       botConfig,
@@ -673,9 +716,10 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
   ]);
   const botConfig = configDoc.exists ? configDoc.data() : {};
 
-  const [orderContext, stockInfo] = await Promise.all([
+  const [orderContext, stockInfo, productInfo] = await Promise.all([
     resolveOrderContext(text, customer, conversation, from),
     resolveStockContext(text),
+    resolveProductInfoContext(text),
   ]);
   let customerContext = buildCustomerContext(customer);
   if (delayNote) customerContext = `${customerContext ?? ''}\n\n${delayNote}`.trim();
@@ -685,6 +729,7 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
     orderInfo: orderContext.orderInfo,
     orderRef: orderContext.orderRef,
     stockInfo,
+    productInfo,
     customerContext,
     availableLabels,
     botConfig,
@@ -752,7 +797,7 @@ async function resolveStockContext(text) {
   if (!STOCK_PATTERNS.some(re => re.test(text))) return null;
 
   try {
-    const products = await searchProducts(text);
+    const products = await searchProducts(cleanProductQuery(text));
     if (!products?.length) return null;
 
     let sku = null;
@@ -776,6 +821,52 @@ async function resolveStockContext(text) {
     return formatStockInfo(productName, sku, stockResult);
   } catch (err) {
     console.error('[bot] resolveStockContext error:', err.message);
+    return null;
+  }
+}
+
+// Quita el <link> de Google Fonts y las etiquetas HTML que TiendaNube guarda
+// en la descripción del producto, dejando texto plano legible para el prompt.
+function stripProductDescriptionHtml(html) {
+  return html
+    .replace(/<link[^>]*>/gi, '')
+    .replace(/<\/?(p|div|li|h[1-6])[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\n{2,}/g, '\n')
+    .trim();
+}
+
+/**
+ * Ficha técnica del producto (material, medidas, aclaraciones de armado/cuidado)
+ * para preguntas que no son de stock sino de detalle del producto — la info YA
+ * está en la descripción de TiendaNube, buscada por nombre (igual que el stock),
+ * solo que antes no se pedía ese campo ni había un trigger para esto.
+ */
+async function resolveProductInfoContext(text) {
+  if (!text || !PRODUCT_INFO_PATTERNS.some(re => re.test(text))) return null;
+
+  try {
+    const products = await searchProducts(cleanProductQuery(text));
+    if (!products?.length) return null;
+    const p = products[0];
+
+    const name = typeof p.name === 'string' ? p.name : (p.name?.es ?? p.name?.en ?? Object.values(p.name ?? {})[0] ?? 'Producto');
+    const rawDesc = p.description?.es ?? p.description?.en ?? Object.values(p.description ?? {})[0] ?? '';
+    const cleanDesc = rawDesc ? stripProductDescriptionHtml(rawDesc) : '';
+
+    const variant = p.variants?.[0];
+    const dims = variant && (variant.width || variant.height || variant.depth || variant.weight)
+      ? `Ancho ${variant.width ?? '?'}cm x Alto ${variant.height ?? '?'}cm x Profundidad ${variant.depth ?? '?'}cm — Peso ${variant.weight ?? '?'}kg`
+      : null;
+
+    if (!cleanDesc && !dims) return null;
+
+    let info = `Producto: ${name}`;
+    if (cleanDesc) info += `\n${cleanDesc}`;
+    if (dims) info += `\nMedidas registradas en el sistema (pueden diferir levemente de las mencionadas en la descripción): ${dims}`;
+    return info;
+  } catch (err) {
+    console.error('[bot] resolveProductInfoContext error:', err.message);
     return null;
   }
 }
