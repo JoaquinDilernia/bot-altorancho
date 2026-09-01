@@ -51,6 +51,19 @@ Ejemplo: "[CERRAR] ¡Con mucho gusto! Si necesitás algo más, escribinos cuando
 Usá [CERRAR] solo cuando estés seguro de que la conversación terminó.`;
 }
 
+// Extrae el texto de la respuesta recorriendo los bloques de `content` en
+// vez de asumir que el bloque [0] es siempre de tipo texto — con modelos
+// que pueden anteponer bloques de otro tipo (ej: thinking), asumir [0]
+// devolvía undefined y tiraba el bot entero abajo sin avisarle nada al
+// cliente (ver incidente 2026-09-01, cambio a claude-sonnet-5).
+function extractText(response) {
+  return (response.content ?? [])
+    .filter(block => block.type === 'text')
+    .map(block => block.text)
+    .join('')
+    .trim();
+}
+
 function callAnthropicAPIOnce(payload) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify(payload);
@@ -136,7 +149,7 @@ export async function generateConversationSummary(messages) {
     }],
   });
   logUsage(response.usage, 'summary');
-  return response.content[0].text.trim();
+  return extractText(response);
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
@@ -153,7 +166,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   });
 
   logUsage(response.usage, 'bot_reply');
-  return response.content[0].text;
+  return extractText(response);
 }
 
 function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, customerContext, availableLabels = [], departments = []) {
