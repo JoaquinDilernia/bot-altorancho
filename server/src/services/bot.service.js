@@ -646,6 +646,89 @@ async function processIncomingMessageInternal(msg) {
   }
 }
 
+/**
+ * Reprocesa una conversación que quedó con el último mensaje del cliente
+ * sin responder (ej: incidente 2026-09-01 — el bot crasheaba después de
+ * generar la respuesta y antes de enviarla). A diferencia del flujo normal,
+ * NO vuelve a guardar el/los mensajes del cliente — ya están en `messages`.
+ * Usa el último mensaje como input nuevo y el resto como historial, igual
+ * que hubiera pasado en el webhook original.
+ */
+export async function reprocessStuckConversation(from, { delayNote = null } = {}) {
+  const conversation = await getOrCreateConversation(from, 'whatsapp');
+  const messages = conversation.messages ?? [];
+  if (!messages.length || messages[messages.length - 1].role !== 'user') {
+    return { skipped: true, reason: 'último mensaje no es del cliente' };
+  }
+  const lastMsg = messages[messages.length - 1];
+  const history = messages.slice(0, -1);
+  const text = lastMsg.content ?? '';
+
+  const [knowledgeBase, customer, availableLabels, configDoc, departments] = await Promise.all([
+    getKnowledgeBasePrompt().catch(() => ''),
+    getOrCreateCustomer(from, 'whatsapp'),
+    getAllLabels().catch(() => []),
+    getDb().collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
+    getActiveDepartments().then(d => d.filter(dep => dep.id !== 'admin')).catch(() => []),
+  ]);
+  const botConfig = configDoc.exists ? configDoc.data() : {};
+
+  const [orderContext, stockInfo] = await Promise.all([
+    resolveOrderContext(text, customer, conversation, from),
+    resolveStockContext(text),
+  ]);
+  let customerContext = buildCustomerContext(customer);
+  if (delayNote) customerContext = `${customerContext ?? ''}\n\n${delayNote}`.trim();
+
+  const botReply = await generateBotResponse(text, history, {
+    knowledgeBase,
+    orderInfo: orderContext.orderInfo,
+    orderRef: orderContext.orderRef,
+    stockInfo,
+    customerContext,
+    availableLabels,
+    botConfig,
+    imageData: null,
+    departments,
+  });
+
+  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
+  const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
+  const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
+  const cleanText = toWhatsAppBold(textAfterLabels);
+
+  await appendMessage(from, { role: 'assistant', content: cleanText });
+
+  if (botNewLabels.length > 0) {
+    await Promise.all(botNewLabels.map(l => createLabel(l, '#6b7280').then(() => addLabelToConversation(from, l))));
+  }
+  if (botLabels.length > 0) {
+    await Promise.all(botLabels.map(l => addLabelToConversation(from, l)));
+  }
+
+  let sent = false;
+  if (!cleanText.trim()) {
+    console.warn(`[reprocess] cleanText vacío para ${from} — no se envía`);
+  } else {
+    await sendWhatsAppMessage(from, cleanText);
+    sent = true;
+  }
+
+  if (shouldEscalate) {
+    await dispatchConversation(from, { status: 'escalated', humanMode: true, assignedTo: assignTo ?? null });
+    const deptName = departments.find(d => d.id === assignTo)?.name ?? 'Atención al cliente';
+    const escalationMsg = buildEscalationMessage(deptName, botConfig);
+    if (escalationMsg) {
+      await appendMessage(from, { role: 'assistant', content: escalationMsg });
+      await sendWhatsAppMessage(from, escalationMsg);
+    }
+  } else if (shouldClose) {
+    await updateConversationStatus(from, 'resolved');
+  }
+
+  return { skipped: false, sent, shouldEscalate, shouldClose, replyPreview: cleanText.slice(0, 80) };
+}
+
 async function resolveStockContext(text) {
   if (!text) return null;
 
