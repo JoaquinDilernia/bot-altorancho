@@ -459,7 +459,8 @@ export default function Conversations() {
     const hadMore = newLen > prevMsgCountRef.current;
     prevMsgCountRef.current = newLen;
     if (hadMore && atBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     }
   }, [messages]);
 
