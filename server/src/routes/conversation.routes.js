@@ -37,7 +37,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 
 
 // Normalizes Argentine mobile numbers to E.164 without '+' for the WhatsApp API.
 // Accepts: 5491112345678 | +5491112345678 | 1112345678 | 01112345678 | 91112345678
-function normalizeArgPhone(raw) {
+export function normalizeArgPhone(raw) {
   let d = raw.trim().replace(/[^\d]/g, '');
   if (d.startsWith('54')) return d;           // already has country code
   if (d.startsWith('0')) d = d.slice(1);      // strip local trunk 0
@@ -257,10 +257,24 @@ function isWindowExpiredError(sendErr) {
   return WA_WINDOW_EXPIRED_CODES.has(code) || msg.toLowerCase().includes('window');
 }
 
+// `replyTo` (opcional): { waMsgId, role, preview } de un mensaje anterior que
+// el agente eligió citar desde el panel — mismo shape que ya arma
+// `resolveReplyTo()` en bot.service.js para las citas entrantes, así el
+// front no necesita distinguir cómo se armó.
+function sanitizeReplyTo(replyTo) {
+  if (!replyTo?.waMsgId || typeof replyTo.waMsgId !== 'string') return null;
+  return {
+    waMsgId: replyTo.waMsgId,
+    role: replyTo.role ?? null,
+    preview: String(replyTo.preview ?? '').slice(0, 120),
+  };
+}
+
 router.post('/:contactId/reply', async (req, res) => {
   try {
     const { contactId } = req.params;
     const { message } = req.body;
+    const replyTo = sanitizeReplyTo(req.body.replyTo);
 
     if (!message?.trim()) {
       return res.status(400).json({ error: 'Mensaje vacío' });
@@ -283,14 +297,17 @@ router.post('/:contactId/reply', async (req, res) => {
     const msgId = crypto.randomUUID();
 
     // Save message immediately with 'sending' status
-    await appendMessage(contactId, { role: 'admin', content: message.trim(), msgId, msgStatus: 'sending', agentName: req.agent.name });
+    await appendMessage(contactId, {
+      role: 'admin', content: message.trim(), msgId, msgStatus: 'sending', agentName: req.agent.name,
+      ...(replyTo && { replyTo: { role: replyTo.role, preview: replyTo.preview } }),
+    });
 
     let sendError = null;
     let waMsgId = null;
     let windowExpired = false;
     try {
       if (channel === 'whatsapp') {
-        waMsgId = await sendWhatsAppMessage(contactId, message.trim());
+        waMsgId = await sendWhatsAppMessage(contactId, message.trim(), replyTo?.waMsgId ?? null);
       } else if (channel === 'instagram') {
         await sendInstagramMessage(contactId, message.trim());
       }
@@ -386,15 +403,18 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       : mimetype.startsWith('video/') ? 'video'
       : mimetype.startsWith('image/') ? 'image'
       : 'document';
+    let replyTo = null;
+    try { replyTo = sanitizeReplyTo(JSON.parse(req.body.replyTo ?? 'null')); } catch { /* ignora JSON inválido */ }
 
     const msgId = crypto.randomUUID();
     let sendError = null;
     let windowExpired = false;
     let metaMediaId = null;
+    let waMsgId = null;
     try {
       if (channel === 'whatsapp') {
         metaMediaId = await uploadMetaMedia(buffer, mimetype);
-        if (metaMediaId) await sendWhatsAppMedia(contactId, metaMediaId, mimetype, originalname);
+        if (metaMediaId) waMsgId = await sendWhatsAppMedia(contactId, metaMediaId, mimetype, originalname, replyTo?.waMsgId ?? null);
       }
     } catch (sendErr) {
       windowExpired = channel === 'whatsapp' && isWindowExpiredError(sendErr);
@@ -417,6 +437,8 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       msgId,
       msgStatus: sendError ? 'error' : 'sent',
       agentName: req.agent.name,
+      ...(waMsgId && { waMsgId }),
+      ...(replyTo && { replyTo: { role: replyTo.role, preview: replyTo.preview } }),
     });
 
     if (sendError) {

@@ -24,6 +24,8 @@ function PageLoader() {
 // minRole: undefined = all, 'atencion_cliente' = not operador, 'admin' = only admin
 const NAV_ITEMS = [
   { to: '/conversations', label: 'Conversaciones',  icon: IconChat },
+  { to: '/customers',     label: 'Contactos',       icon: IconContacts,   minRole: 'atencion_cliente' },
+  { to: '/campaigns',     label: 'Difusiones',      icon: IconMegaphone,  minRole: 'atencion_cliente' },
   { to: '/dashboard',     label: 'Dashboard',       icon: IconDashboard,  minRole: 'atencion_cliente' },
   { to: '/stats',         label: 'Estadísticas',    icon: IconChart,      minRole: 'atencion_cliente' },
   { to: '/knowledge',     label: 'Knowledge Base',  icon: IconBook,       minRole: 'atencion_cliente' },
@@ -219,6 +221,26 @@ function IconUsers({ className }) {
       <circle cx="9" cy="7" r="4"/>
       <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  );
+}
+
+function IconContacts({ className }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <circle cx="12" cy="10" r="2.5" />
+      <path d="M8 17c0-2 1.8-3 4-3s4 1 4 3" />
+    </svg>
+  );
+}
+
+function IconMegaphone({ className }) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11v2a2 2 0 0 0 2 2h1l2.5 5.5" />
+      <path d="M6 11 18.5 5v14L6 13" />
+      <path d="M18.5 8.5a3 3 0 0 1 0 7" />
     </svg>
   );
 }

@@ -157,8 +157,17 @@ async function downloadMedia(url, suggestedExt = 'jpg') {
 }
 
 const REPLY_ROLE_LABELS = { user: 'Cliente', admin: 'Agente', assistant: 'Alto' };
+const REPLY_PREVIEW_MAX = 80;
 
-function MessageBubble({ msg, onRetry, contactId }) {
+// Mismo recorte que `resolveReplyTo()` en bot.service.js, para que la cita se
+// vea igual la arme el cliente (citando en WhatsApp) o el agente (citando
+// desde el panel).
+function buildReplyPreview(content) {
+  const text = content ?? '';
+  return text.length > REPLY_PREVIEW_MAX ? `${text.slice(0, REPLY_PREVIEW_MAX)}…` : text;
+}
+
+function MessageBubble({ msg, onRetry, onQuote, contactId }) {
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
   const token = localStorage.getItem('altorancho_token');
@@ -260,6 +269,16 @@ function MessageBubble({ msg, onRetry, contactId }) {
         {isUser ? 'Cliente' : isAdmin ? (msg.agentName || 'Agente') : 'Alto'}
         {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
         {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} />}
+        {onQuote && msg.waMsgId && (
+          <button
+            type="button"
+            className={styles.msgQuoteBtn}
+            onClick={() => onQuote({ waMsgId: msg.waMsgId, role: msg.role, preview: buildReplyPreview(msg.content) })}
+            title="Responder citando este mensaje"
+          >
+            ↩
+          </button>
+        )}
       </span>
     </div>
   );
@@ -345,6 +364,7 @@ export default function Conversations() {
   const [loadingArchived, setLoadingArchived] = useState(false);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null); // { waMsgId, role, preview } | null
   const [updating, setUpdating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [allLabels, setAllLabels] = useState([]);
@@ -450,6 +470,7 @@ export default function Conversations() {
     setSelectedTemplate(null);
     setTemplateParams([]);
     setTemplateSendError('');
+    setReplyingTo(null);
     pollMsgRef.current = setInterval(() => loadMessages(selectedIdRef.current), 5000);
     return () => clearInterval(pollMsgRef.current);
   }, [selected?.id]);
@@ -671,11 +692,13 @@ export default function Conversations() {
     if (!reply.trim() || !selected || sending) return;
     setSending(true);
     const text = reply.trim();
+    const quoted = replyingTo;
     setReply('');
+    setReplyingTo(null);
     try {
       const res = await authFetch(BASE_URL + `/api/conversations/${selected.id}/reply`, {
         method: 'POST',
-        body: { message: text },
+        body: { message: text, ...(quoted && { replyTo: quoted }) },
       });
       await loadMessages(selected.id);
       if (!res.ok) {
@@ -755,9 +778,12 @@ export default function Conversations() {
     if (!file || !selected) return;
     e.target.value = '';
     setSending(true);
+    const quoted = replyingTo;
+    setReplyingTo(null);
     try {
       const form = new FormData();
       form.append('file', file);
+      if (quoted) form.append('replyTo', JSON.stringify(quoted));
       const r = await authFetch(BASE_URL + `/api/conversations/${selected.id}/media`, {
         method: 'POST',
         body: form,
@@ -1093,6 +1119,7 @@ export default function Conversations() {
                       key={i}
                       msg={msg}
                       onRetry={canRetry ? handleRetry : null}
+                      onQuote={isHuman ? setReplyingTo : null}
                       contactId={selected.id}
                     />
                   );
@@ -1205,6 +1232,24 @@ export default function Conversations() {
                 <div className={styles.replyHumanBadge}>
                   Modo agente — Bot no responde · Respondiendo como <strong>{nameMap[myId] ?? myId}</strong>
                 </div>
+                {replyingTo && (
+                  <div className={styles.replyingToBar}>
+                    <div className={styles.replyingToText}>
+                      <span className={styles.msgReplyQuoteFrom}>
+                        Respondiendo a {REPLY_ROLE_LABELS[replyingTo.role] ?? ''}
+                      </span>
+                      <span className={styles.msgReplyQuoteText}>{replyingTo.preview}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={styles.replyingToCancel}
+                      onClick={() => setReplyingTo(null)}
+                      title="Cancelar cita"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
                 {windowApproaching && (
                   <div className={styles.windowWarning}>
                     ⚠️ El cliente no escribe hace {Math.floor(lastClientHours)}h. La ventana de WhatsApp de 24h está por cerrarse — si no responde pronto, los mensajes dejarán de llegar.

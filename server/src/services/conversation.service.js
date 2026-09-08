@@ -238,18 +238,31 @@ export async function setMessageTranscript(contactId, mediaId, transcript) {
   await docRef.update({ messages: updated });
 }
 
-// Update a specific message's delivery status by WA message ID (for webhook delivery receipts)
-export async function updateMessageStatusByWaMsgId(waMsgId, newStatus) {
+// Update a specific message's delivery status by WA message ID (for webhook
+// delivery receipts). `contactId` viene del `recipient_id` que manda Meta en
+// el mismo webhook de status — como el documento de conversación está
+// indexado por contactId, alcanza con un get() directo. Antes esto buscaba
+// por un campo `lastWaMsgId` a nivel conversación que nunca se escribía en
+// ningún lado: la búsqueda siempre volvía vacía y los estados 'delivered'/
+// 'read' jamás se aplicaban (bug presente desde que existe esta función).
+const STATUS_RANK = { sending: 0, sent: 1, delivered: 2, read: 3 };
+
+export async function updateMessageStatusByWaMsgId(contactId, waMsgId, newStatus) {
+  if (!contactId) return;
   const db = getDb();
-  const snap = await db.collection(COLLECTION)
-    .where('lastWaMsgId', '==', waMsgId)
-    .limit(1)
-    .get();
-  if (snap.empty) return;
-  const docRef = snap.docs[0].ref;
-  const messages = snap.docs[0].data().messages ?? [];
+  const docRef = db.collection(COLLECTION).doc(contactId);
+  const doc = await docRef.get();
+  if (!doc.exists) return;
+  const messages = doc.data().messages ?? [];
   const updated = messages.map(m => {
     if (m.waMsgId !== waMsgId) return m;
+    // No pisar un estado más avanzado si el webhook llega desordenado
+    // (ej. 'delivered' después de 'read') — 'error' es terminal y siempre gana.
+    if (newStatus !== 'error') {
+      const currentRank = STATUS_RANK[m.msgStatus] ?? 0;
+      const nextRank = STATUS_RANK[newStatus] ?? 0;
+      if (nextRank < currentRank) return m;
+    }
     return { ...m, msgStatus: newStatus };
   });
   await docRef.update({ messages: updated });

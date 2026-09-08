@@ -40,8 +40,11 @@ export function verifyWebhookSignature(rawBody, signature) {
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
 }
 
-// Returns WA message ID on success, null if tokens not configured
-export async function sendWhatsAppMessage(to, text) {
+// Returns WA message ID on success, null if tokens not configured.
+// `replyToWaMsgId`: si se pasa, el mensaje aparece como respuesta citada
+// (context.message_id) en WhatsApp — misma función nativa de "responder" que
+// ya se lee de los mensajes entrantes, ahora también disponible al enviar.
+export async function sendWhatsAppMessage(to, text, replyToWaMsgId = null) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) {
     console.log('[meta] sendWhatsAppMessage skipped — tokens not configured');
     return null;
@@ -54,6 +57,7 @@ export async function sendWhatsAppMessage(to, text) {
       to,
       type: 'text',
       text: { body: text },
+      ...(replyToWaMsgId && { context: { message_id: replyToWaMsgId } }),
     },
     {
       headers: {
@@ -216,11 +220,15 @@ export function resolveMetaMediaType(mimeType) {
   return 'document';
 }
 
-export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null) {
-  if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return;
+// Returns WA message ID on success, null if tokens not configured (mismo
+// contrato que sendWhatsAppMessage — antes no devolvía nada, así que un
+// archivo/audio enviado nunca podía recibir tildes de entregado/leído ni
+// ser citado más adelante).
+export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null, replyToWaMsgId = null) {
+  if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return null;
   const type = resolveMetaMediaType(mimeType);
   const mediaObject = type === 'document' && fileName ? { id: mediaId, filename: fileName } : { id: mediaId };
-  await axios.post(
+  const { data } = await axios.post(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
     {
       messaging_product: 'whatsapp',
@@ -228,9 +236,11 @@ export async function sendWhatsAppMedia(to, mediaId, mimeType, fileName = null) 
       to,
       type,
       [type]: mediaObject,
+      ...(replyToWaMsgId && { context: { message_id: replyToWaMsgId } }),
     },
     { headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`, 'Content-Type': 'application/json' } }
   );
+  return data.messages?.[0]?.id ?? null;
 }
 
 async function fetchMetaMediaInfo(mediaId) {

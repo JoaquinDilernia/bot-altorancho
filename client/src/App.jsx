@@ -18,6 +18,8 @@ import Departments   from './pages/Departments.jsx';
 import Notifications from './pages/Notifications.jsx';
 import SimpliRouteHistory from './pages/SimpliRouteHistory.jsx';
 import Users         from './pages/Users.jsx';
+import Customers     from './pages/Customers.jsx';
+import Campaigns     from './pages/Campaigns.jsx';
 
 export default function App() {
   return (
@@ -42,6 +44,8 @@ function AppRoutes() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard"     element={<Dashboard />} />
           <Route path="conversations" element={<Conversations />} />
+          <Route path="customers"     element={<Customers />} />
+          <Route path="campaigns"     element={<Campaigns />} />
           <Route path="simulator"     element={<Simulator />} />
           <Route path="knowledge"     element={<KnowledgeBase />} />
           <Route path="config"        element={<Config />} />

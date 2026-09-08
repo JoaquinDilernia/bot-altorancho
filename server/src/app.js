@@ -21,6 +21,8 @@ import costsRoutes from './routes/costs.routes.js';
 import { initFirebase } from './services/firebase.service.js';
 import departmentRoutes from './routes/department.routes.js';
 import notificationsRoutes from './routes/notifications.routes.js';
+import campaignRoutes from './routes/campaign.routes.js';
+import redirectRoutes from './routes/redirect.routes.js';
 import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { seedDepartmentsIfNeeded } from './services/department.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
@@ -74,6 +76,9 @@ app.use(express.json());
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/simpliroute-webhook', simpliRouteRoutes);
 app.use('/api/auth', authRoutes);
+// Redirect de links cortos de difusiones — lo clickea el destinatario final
+// desde WhatsApp, no un agente logueado, así que va sin requireAuth.
+app.use('/r', redirectRoutes);
 
 // Routes (protected)
 // Operador can access: conversations (filtered), labels
@@ -102,6 +107,7 @@ app.use('/api/costs',         requireAuth, requireAtLeastAtencionCliente, costsR
 // la lectura la necesita cualquier operador para derivar conversaciones.
 app.use('/api/departments',   requireAuth, departmentRoutes);
 app.use('/api/notifications',  requireAuth, notificationsRoutes);
+app.use('/api/campaigns',     requireAuth, requireAtLeastAtencionCliente, campaignRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -7,6 +7,7 @@ import {
 } from '../services/meta.service.js';
 import { processIncomingMessage } from '../services/bot.service.js';
 import { updateMessageStatusByWaMsgId } from '../services/conversation.service.js';
+import { updateCampaignSendStatusByWaMsgId } from '../services/campaign.service.js';
 
 const router = Router();
 
@@ -42,13 +43,20 @@ router.post('/', async (req, res) => {
       // Handle delivery status updates
       const statusUpdate = parseWhatsAppStatusUpdate(body);
       if (statusUpdate) {
-        const { waMsgId, status } = statusUpdate;
+        const { waMsgId, status, recipientId } = statusUpdate;
         // Map WA statuses to our internal statuses
         // 'sent' → 'sent', 'delivered' → 'delivered', 'read' → 'read', 'failed' → 'error'
         const mapped = status === 'failed' ? 'error' : status;
         if (['delivered', 'read', 'error'].includes(mapped)) {
-          updateMessageStatusByWaMsgId(waMsgId, mapped).catch(err =>
+          // Un waMsgId es de una conversación normal O de un envío de
+          // difusión, nunca de las dos — probar ambas rutas es barato (cada
+          // una no hace nada si no encuentra su documento) y evita tener que
+          // distinguir el origen del mensaje en este punto.
+          updateMessageStatusByWaMsgId(recipientId, waMsgId, mapped).catch(err =>
             console.error('[webhook] Error actualizando estado de mensaje:', err.message)
+          );
+          updateCampaignSendStatusByWaMsgId(waMsgId, mapped).catch(err =>
+            console.error('[webhook] Error actualizando estado de difusión:', err.message)
           );
         }
         return;
