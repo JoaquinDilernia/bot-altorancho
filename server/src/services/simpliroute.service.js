@@ -16,11 +16,11 @@ const TRACKING_URL_BASE = 'https://livetracking.simpliroute.com/widget/account/1
 
 // Plantillas de WhatsApp que dispara este webhook — deben existir y estar
 // aprobadas en Meta (panel de Notificaciones) antes de que esto pueda enviar.
-// v2: la primera ("pedido_en_camino") quedó atascada en PENDING en Meta
-// varias horas más que sus hermanas del mismo lote — se recreó sin emoji
-// bajo otro nombre técnico en vez de esperarla indefinidamente.
+// Varias plantillas con emoji quedaron atascadas en PENDING en Meta y se
+// recrearon sin emoji bajo un nombre _v2 en vez de esperarlas: pasó con
+// "pedido_en_camino" (2026-08) y con "pedido_entregado" (2026-09-09).
 const TEMPLATE_ON_ROUTE = 'pedido_en_camino_v2';
-const TEMPLATE_DELIVERED = 'pedido_entregado';
+const TEMPLATE_DELIVERED = 'pedido_entregado_v2';
 const TEMPLATE_FAILED = 'pedido_no_entregado';
 
 const SUCCESS_VALUES = new Set(['success', 'successful', 'exitoso', 'delivered', 'completed', 'complete']);
