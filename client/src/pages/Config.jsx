@@ -139,6 +139,23 @@ export default function Config() {
           </div>
         </section>
 
+        {/* SimpliRoute */}
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>SimpliRoute</h2>
+            <ToggleField
+              label="Botón de seguimiento en los avisos"
+              checked={config.simpliRouteTrackingButton === true}
+              onChange={(v) => setConfig({ ...config, simpliRouteTrackingButton: v })}
+            />
+          </div>
+          <p className={styles.hint}>
+            Agrega un botón "Ver seguimiento" a los 3 avisos automáticos de SimpliRoute (en camino / entregado / no entregado)
+            que abre el link de tracking del pedido. <strong>Prendelo recién cuando las 3 plantillas en Meta tengan el botón URL aprobado</strong>{' '}
+            (<code>https://livetracking.simpliroute.com/widget/account/100457/tracking/{'{{1}}'}</code>), si no Meta rechaza el envío.
+          </p>
+        </section>
+
         {/* Flujo de conversación */}
         <section className={styles.section}>
           <div className={styles.sectionHead}>

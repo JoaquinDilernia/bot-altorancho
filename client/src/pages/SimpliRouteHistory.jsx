@@ -7,6 +7,12 @@ const EVENT_LABELS = {
   checkout: 'Checkout',
 };
 
+const SOURCE_LABELS = {
+  simpliroute: 'SimpliRoute',
+  tiendanube: 'Tienda Nube',
+  odoo: 'Odoo',
+};
+
 export default function SimpliRouteHistory() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -64,6 +70,7 @@ export default function SimpliRouteHistory() {
                     <th>Fecha</th>
                     <th>Evento</th>
                     <th>Pedido</th>
+                    <th>Origen</th>
                     <th>Cliente</th>
                     <th>Teléfono</th>
                     <th>Plantilla</th>
@@ -75,7 +82,12 @@ export default function SimpliRouteHistory() {
                     <tr key={h.id} className={h.status ? styles[`row_${h.status}`] : ''}>
                       <td>{h.sentAt ? new Date(h.sentAt).toLocaleString('es-AR') : '—'}</td>
                       <td>{EVENT_LABELS[h.event] ?? h.event ?? '—'}</td>
-                      <td className={styles.orderNum}>#{h.orderNumber}</td>
+                      <td className={styles.orderNum}>
+                        {h.trackingUrl
+                          ? <a href={h.trackingUrl} target="_blank" rel="noreferrer">#{h.orderNumber} ↗</a>
+                          : <>#{h.orderNumber}</>}
+                      </td>
+                      <td>{SOURCE_LABELS[h.source] ?? (h.source ?? '—')}</td>
                       <td>{h.customerName ?? '—'}</td>
                       <td>
                         {h.phone

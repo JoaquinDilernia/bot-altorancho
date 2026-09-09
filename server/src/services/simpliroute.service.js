@@ -2,10 +2,17 @@ import crypto from 'crypto';
 import { getDb } from './firebase.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
 import { findOrder } from './tiendanube.service.js';
+import { findOdooOrder, getPartnerContact } from './odoo.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus, markNotified } from './conversation.service.js';
 import { normalizePhone } from './notifications.service.js';
 
 const HISTORY_COLLECTION = 'bot-altorancho_simpliroute_notifications';
+
+// URL del seguimiento en vivo de SimpliRoute. El código es el "ID de
+// referencia" de la visita, que Alto Rancho llena con el número de pedido
+// (opción "Link de Id de seguimiento" activada). Verificado en el panel:
+// Comunicaciones → widget de Live Tracking. Cuenta 100457 = Alto Rancho.
+const TRACKING_URL_BASE = 'https://livetracking.simpliroute.com/widget/account/100457/tracking/';
 
 // Plantillas de WhatsApp que dispara este webhook — deben existir y estar
 // aprobadas en Meta (panel de Notificaciones) antes de que esto pueda enviar.
@@ -84,6 +91,68 @@ function extractStatus(payload) {
   return status ? String(status).toLowerCase() : null;
 }
 
+// Código para el link de seguimiento: el "ID de referencia" de la visita
+// (que acá es el número de pedido). Si no viene, usamos el número que ya
+// extrajimos del título.
+export function buildTrackingCode(payload, orderNumber) {
+  const ref = deepFind(payload, ['reference', 'reference_id']);
+  const code = String(ref ?? orderNumber ?? '').replace(/^#/, '').trim();
+  return code || null;
+}
+
+export function buildTrackingUrl(payload, orderNumber) {
+  const code = buildTrackingCode(payload, orderNumber);
+  return code ? `${TRACKING_URL_BASE}${encodeURIComponent(code)}` : null;
+}
+
+// Resuelve teléfono + nombre del cliente de un envío, en orden de preferencia:
+//  1. el propio payload de SimpliRoute (contact_phone) — es el que la app de
+//     reparto tiene cargado y usa para su tracking
+//  2. TiendaNube, por número de pedido
+//  3. Odoo, por número de pedido (findOdooOrder prueba TN<n> y S<n>) → partner
+// Devuelve null si no aparece en ningún lado.
+export async function resolveShipmentContact(payload, orderNumber, deps = {}) {
+  const findOrder_ = deps.findOrder ?? findOrder;
+  const findOdooOrder_ = deps.findOdooOrder ?? findOdooOrder;
+  const getPartnerContact_ = deps.getPartnerContact ?? getPartnerContact;
+
+  const fromPayload = deepFind(payload, ['contact_phone', 'phone']);
+  if (fromPayload && String(fromPayload).trim()) {
+    const phone = normalizePhone(fromPayload);
+    if (phone) {
+      return { phone, name: deepFind(payload, ['contact_name', 'name']) ?? null, source: 'simpliroute' };
+    }
+  }
+
+  const tnOrder = await findOrder_(orderNumber).catch(() => null);
+  const tnPhone = normalizePhone(tnOrder?.customer?.phone ?? '');
+  if (tnPhone) {
+    return { phone: tnPhone, name: tnOrder.customer?.name ?? null, source: 'tiendanube' };
+  }
+
+  const odoo = await findOdooOrder_(orderNumber).catch(() => null);
+  const partnerId = Array.isArray(odoo?.order?.partner_id) ? odoo.order.partner_id[0] : null;
+  if (partnerId) {
+    const contact = await getPartnerContact_(partnerId).catch(() => null);
+    const odPhone = normalizePhone(contact?.phone ?? '');
+    if (odPhone) {
+      const name = Array.isArray(odoo.order.partner_id) ? odoo.order.partner_id[1] : null;
+      return { phone: odPhone, name: name ?? null, source: 'odoo' };
+    }
+  }
+
+  return null;
+}
+
+async function getBotConfig() {
+  try {
+    const doc = await getDb().collection('bot-altorancho_config').doc('bot_config').get();
+    return doc.exists ? doc.data() : {};
+  } catch {
+    return {};
+  }
+}
+
 // Deja registro de cada intento de notificación (enviado, error u omitido)
 // para el módulo de Historial — sin esto, un pedido que falla en silencio
 // (sin teléfono, no encontrado en TiendaNube) no queda rastreable.
@@ -97,25 +166,25 @@ async function logSimpliRouteNotification(entry) {
 
 // Envía la plantilla correspondiente al cliente de un pedido. Reutilizado
 // tanto por el checkout (un pedido) como por el inicio de ruta (N pedidos).
-async function notifyOrder(orderNumber, templateName, event) {
-  const base = { event, templateName, orderNumber };
+// `payload` es la visita (trae contact_phone, reference, etc.).
+async function notifyOrder(orderNumber, templateName, event, payload = {}, botConfig = {}) {
+  const trackingUrl = buildTrackingUrl(payload, orderNumber);
+  const base = { event, templateName, orderNumber, trackingUrl: trackingUrl ?? null };
 
-  const order = await findOrder(orderNumber);
-  if (!order) {
-    console.warn(`[simpliroute] Pedido #${orderNumber} no encontrado en TiendaNube — no se puede notificar`);
-    await logSimpliRouteNotification({ ...base, status: 'skipped', reason: 'Pedido no encontrado en TiendaNube' });
+  const contact = await resolveShipmentContact(payload, orderNumber);
+  if (!contact) {
+    console.warn(`[simpliroute] Pedido #${orderNumber}: sin teléfono (ni payload, ni TiendaNube, ni Odoo) — no se notifica`);
+    await logSimpliRouteNotification({ ...base, status: 'skipped', reason: 'Sin teléfono (payload/TiendaNube/Odoo)' });
     return;
   }
+  const { phone, name: customerName, source } = contact;
+  base.source = source;
 
-  const phone = normalizePhone(order.customer?.phone ?? '');
-  const customerName = order.customer?.name ?? null;
-  if (!phone) {
-    console.warn(`[simpliroute] Pedido #${orderNumber} sin teléfono de cliente — no se puede notificar`);
-    await logSimpliRouteNotification({ ...base, status: 'skipped', reason: 'Sin teléfono', customerName });
-    return;
-  }
-
-  const bodyParams = [String(order.number)];
+  const bodyParams = [String(orderNumber)];
+  // El botón de seguimiento sólo se manda si está prendido en Config Y las
+  // plantillas de Meta ya tienen el botón URL "Ver seguimiento" aprobado.
+  const trackingCode = buildTrackingCode(payload, orderNumber);
+  const urlButtonParam = botConfig.simpliRouteTrackingButton && trackingCode ? trackingCode : null;
 
   // Mismo patrón que sendBulkOrders (notifications.service.js): dejar
   // rastro en la conversación del cliente antes de mandar por Meta, para
@@ -125,7 +194,7 @@ async function notifyOrder(orderNumber, templateName, event) {
     await getOrCreateConversation(phone, 'whatsapp', customerName);
     await appendMessage(phone, {
       role: 'admin',
-      content: `[Plantilla: ${templateName}] pedido #${order.number}`,
+      content: `[Plantilla: ${templateName}] pedido #${orderNumber}`,
       msgId,
       msgStatus: 'sending',
     });
@@ -133,7 +202,7 @@ async function notifyOrder(orderNumber, templateName, event) {
     let waMsgId = null;
     let sendError = null;
     try {
-      waMsgId = await sendWhatsAppTemplate(phone, templateName, 'es_AR', bodyParams);
+      waMsgId = await sendWhatsAppTemplate(phone, templateName, 'es_AR', bodyParams, urlButtonParam);
     } catch (err) {
       sendError = err;
     }
@@ -141,11 +210,11 @@ async function notifyOrder(orderNumber, templateName, event) {
     if (sendError) throw sendError;
 
     await markNotified(phone);
-    console.log(`[simpliroute] "${templateName}" enviado a ${phone} por pedido #${order.number}`);
+    console.log(`[simpliroute] "${templateName}" enviado a ${phone} (${source}) por pedido #${orderNumber} — tracking: ${trackingUrl ?? '-'}`);
     await logSimpliRouteNotification({ ...base, status: 'sent', customerName, phone, waMsgId });
   } catch (err) {
     const reason = err.response?.data?.error?.message ?? err.message;
-    console.error(`[simpliroute] Error notificando pedido #${order.number}:`, reason);
+    console.error(`[simpliroute] Error notificando pedido #${orderNumber}:`, reason);
     await logSimpliRouteNotification({ ...base, status: 'error', customerName, phone, reason });
   }
 }
@@ -169,7 +238,8 @@ export async function handleSimpliRouteCheckout(payload) {
     return;
   }
 
-  await notifyOrder(orderNumber, isSuccess ? TEMPLATE_DELIVERED : TEMPLATE_FAILED, 'checkout');
+  const botConfig = await getBotConfig();
+  await notifyOrder(orderNumber, isSuccess ? TEMPLATE_DELIVERED : TEMPLATE_FAILED, 'checkout', payload, botConfig);
 }
 
 // Evento "Inicio de ruta": el conductor arrancó el reparto del día — trae
@@ -187,13 +257,14 @@ export async function handleSimpliRouteRouteStart(payload) {
     return;
   }
 
+  const botConfig = await getBotConfig();
   for (const visit of visits) {
     const orderNumber = extractOrderNumber(visit);
     if (!orderNumber) {
       console.warn('[simpliroute] inicio de ruta: visita sin número de pedido identificable:', JSON.stringify(visit));
       continue;
     }
-    await notifyOrder(orderNumber, TEMPLATE_ON_ROUTE, 'route_start');
+    await notifyOrder(orderNumber, TEMPLATE_ON_ROUTE, 'route_start', visit, botConfig);
     await new Promise(r => setTimeout(r, 200)); // margen para no ráfagar la API de Meta
   }
 }

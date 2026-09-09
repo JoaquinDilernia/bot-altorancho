@@ -171,23 +171,33 @@ export async function downloadMediaAsBase64(mediaId) {
   }
 }
 
-export async function sendWhatsAppTemplate(to, templateName, language = 'es_AR', params = []) {
+// Arma el objeto `template` del payload de Meta. `urlButtonParam`: si se pasa,
+// agrega el parámetro dinámico del botón de URL en la posición 0 (la plantilla
+// tiene que tener un botón URL con {{1}} aprobado en Meta).
+export function buildTemplateObject(templateName, language, params = [], urlButtonParam = null) {
+  const template = { name: templateName, language: { code: language } };
+  const components = [];
+  if (params.length > 0) {
+    components.push({ type: 'body', parameters: params.map(p => ({ type: 'text', text: String(p) })) });
+  }
+  if (urlButtonParam) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: String(urlButtonParam) }],
+    });
+  }
+  if (components.length > 0) template.components = components;
+  return template;
+}
+
+export async function sendWhatsAppTemplate(to, templateName, language = 'es_AR', params = [], urlButtonParam = null) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) {
     console.log('[meta] sendWhatsAppTemplate skipped — tokens not configured');
     return null;
   }
-  const template = {
-    name: templateName,
-    language: { code: language },
-  };
-  if (params.length > 0) {
-    template.components = [
-      {
-        type: 'body',
-        parameters: params.map(p => ({ type: 'text', text: p })),
-      },
-    ];
-  }
+  const template = buildTemplateObject(templateName, language, params, urlButtonParam);
   const { data } = await axios.post(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
     { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template', template },
