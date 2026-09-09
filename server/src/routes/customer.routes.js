@@ -12,6 +12,7 @@ import {
   parseCsv,
   importCustomersCsv,
   exportCustomersCsv,
+  syncAllTiendaNubeCustomers,
 } from '../services/customer.service.js';
 import { normalizeArgPhone } from './conversation.routes.js';
 
@@ -25,9 +26,27 @@ router.get('/', async (req, res) => {
   try {
     const { q, channel } = req.query;
     const tags = req.query.tags ? String(req.query.tags).split(',').filter(Boolean) : undefined;
-    const hasOrders = req.query.hasOrders === 'true' ? true : undefined;
-    const customers = await listCustomers({ q, channel, tags, hasOrders });
+    const customers = await listCustomers({
+      q, channel, tags,
+      hasOrders: req.query.hasOrders === 'true' ? true : undefined,
+      spentMin: req.query.spentMin,
+      spentMonths: req.query.spentMonths,
+      product: req.query.product,
+      productMonths: req.query.productMonths,
+      orderCountMin: req.query.orderCountMin,
+      lastOrderMaxDays: req.query.lastOrderMaxDays,
+      lastOrderMinDays: req.query.lastOrderMinDays,
+    });
     res.json({ customers });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync masivo desde Tienda Nube — puede tardar (recorre todos los pedidos).
+router.post('/sync-tiendanube', async (req, res) => {
+  try {
+    res.json(await syncAllTiendaNubeCustomers());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

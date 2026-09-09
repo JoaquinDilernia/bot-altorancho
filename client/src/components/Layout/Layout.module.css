@@ -100,6 +100,12 @@
   gap: 2px;
   padding: 0 var(--space-3);
   flex: 1;
+  /* Con muchos items el menú tiene que scrollear dentro de sí mismo en vez de
+     desbordar la sidebar y tapar el footer (min-height:0 = fix del clásico
+     bug de flexbox donde el hijo no se deja achicar bajo su contenido). */
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .navItem {

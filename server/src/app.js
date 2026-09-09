@@ -27,6 +27,7 @@ import { seedAgentsIfNeeded } from './services/auth.service.js';
 import { seedDepartmentsIfNeeded } from './services/department.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
 import { closeInactiveConversations } from './services/inactivity.service.js';
+import { syncAllTiendaNubeCustomers } from './services/customer.service.js';
 import { sendEscalationFollowups } from './services/escalation.service.js';
 import { sendPickupFollowups } from './services/notifications.service.js';
 
@@ -52,6 +53,12 @@ cron.schedule('*/30 * * * *', () => {
 // orders still pending pickup after the initial notification
 cron.schedule('0 10 * * *', () => {
   sendPickupFollowups().catch(err => console.error('[cron] pickup followup error:', err));
+});
+
+// Sync masivo de contactos desde Tienda Nube, 1 vez al día (4am) — mantiene
+// montos gastados / cantidad de pedidos / última compra al día para segmentar.
+cron.schedule('0 4 * * *', () => {
+  syncAllTiendaNubeCustomers().catch(err => console.error('[cron] tiendanube sync error:', err.message));
 });
 
 // Middleware

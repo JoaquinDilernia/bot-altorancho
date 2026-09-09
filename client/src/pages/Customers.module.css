@@ -43,6 +43,8 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  flex: 1;
+  min-height: 0; /* deja que el overflow-y realmente scrollee dentro del panel */
   overflow-y: auto;
 }
 
@@ -441,3 +443,35 @@
   .tableRow { grid-template-columns: 1fr; gap: var(--space-2); }
   .rowActions { justify-content: flex-start; }
 }
+
+/* ---- Panel de segmentación avanzada por compras (Tienda Nube) ---- */
+.advPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.advRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.advLabel { font-size: var(--font-size-sm); color: var(--color-text-muted); }
+.advInput {
+  height: 32px;
+  width: 90px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  outline: none;
+}
+.advInput:focus { border-color: var(--color-primary-light); }
+.advInputWide { width: 200px; }
+.hint { font-size: var(--font-size-xs); color: var(--color-text-faint); margin: 0; line-height: 1.5; }
