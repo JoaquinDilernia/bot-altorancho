@@ -98,14 +98,28 @@ function mergeConversation(canonicalId, docs) {
   return { base, merged };
 }
 
+function customerRichness(d) {
+  // Cuánta info "cara de recuperar" tiene el doc: pedidos de TN, notas del
+  // equipo, vínculo con el cliente de TN, historial de compras.
+  return (d.tnCustomerId ? 100 : 0)
+    + (d.agentNotes ? 50 : 0)
+    + (Array.isArray(d.tnOrders) ? d.tnOrders.length : 0)
+    + (d.email ? 5 : 0);
+}
+
 function mergeCustomer(canonicalId, docs) {
   const all = docs.map(d => d.data);
+  // Base = el doc con más info (pedidos TN / notas), no el primero que
+  // devolvió Firestore — así no se pierde el historial de compras ni las
+  // notas si el fragmento vino primero.
+  const base = [...all].sort((a, b) => customerRichness(b) - customerRichness(a))[0];
   return {
-    ...docs[0].data,
+    ...base,
     contactId: canonicalId,
     contactName: all.map(d => d.contactName).find(Boolean) ?? null,
     email: all.map(d => d.email).find(Boolean) ?? null,
     tags: [...new Set(all.flatMap(d => d.tags ?? []))],
+    agentNotes: all.map(d => d.agentNotes).find(Boolean) ?? '',
     createdAt: all.map(d => d.createdAt).filter(Boolean).sort((a, b) => tsMs(a) - tsMs(b))[0] ?? new Date(),
     updatedAt: new Date(),
   };
@@ -156,7 +170,8 @@ async function run() {
   for (const [canonicalId, docs] of custGroups) {
     const merged = mergeCustomer(canonicalId, docs);
     const losers = docs.filter(d => d.id !== canonicalId);
-    console.log(`• ${canonicalId}  <=  ${docs.map(d => d.id).join(', ')}`);
+    const detail = docs.map(d => `${d.id}[${customerRichness(d.data)}r${Array.isArray(d.data.tnOrders) ? '/' + d.data.tnOrders.length + 'ped' : ''}]`).join(' + ');
+    console.log(`• ${canonicalId}  <=  ${detail}  => ${customerRichness(merged)}r`);
     if (APPLY) {
       await db.collection(CUST_COLLECTION).doc(canonicalId).set(merged);
       for (const l of losers) await db.collection(CUST_COLLECTION).doc(l.id).delete();
