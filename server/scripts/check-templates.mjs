@@ -2,8 +2,12 @@
 // El slot "entregado" se cubre con pedido_entregado O pedido_entregado_v2.
 // Exit 0 si los 3 slots están cubiertos (APPROVED + botón), 3 si falta alguno,
 // 4 si alguna quedó REJECTED.
-import 'dotenv/config';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import axios from 'axios';
+
+dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.env') });
 
 const API = 'https://graph.facebook.com/v20.0';
 const WATCH = ['pedido_en_camino_v2', 'pedido_entregado', 'pedido_entregado_v2', 'pedido_no_entregado'];
