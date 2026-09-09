@@ -20,11 +20,14 @@ import {
   enrichCustomerFromTiendaNube,
   buildCustomerContext,
   linkCustomerFromOrder,
+  listAllTags,
+  addTagsToCustomer,
 } from './customer.service.js';
 import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveDepartments } from './department.service.js';
 import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
+import { parseCustomerTagMarkers } from './botMarkers.js';
 
 // Captura números Odoo (S08121), TiendaNube (TN1999675391) y números puros.
 // El número puede venir con o sin "#" y en cualquier parte del mensaje — NO
@@ -413,9 +416,9 @@ function resolveReplyTo(history, replyToWaMsgId) {
 async function processIncomingMessageInternal(msg) {
   const { channel, from, text, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
 
-  let conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments;
+  let conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments, customerTags;
   try {
-    [conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments] = await Promise.all([
+    [conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments, customerTags] = await Promise.all([
       getOrCreateConversation(from, channel, contactName),
       getConversationHistory(from),
       getKnowledgeBasePrompt().catch(() => ''),
@@ -423,6 +426,7 @@ async function processIncomingMessageInternal(msg) {
       getAllLabels().catch(() => []),
       getDb().collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
       getActiveDepartments().then(d => d.filter(dep => dep.id !== 'admin')).catch(() => []),
+      listAllTags().catch(() => []),
     ]);
   } catch (err) {
     console.error('[bot] Error cargando contexto para', from, err.message);
@@ -615,6 +619,7 @@ async function processIncomingMessageInternal(msg) {
       productInfo,
       customerContext,
       availableLabels: availableLabels.map(l => l.name),
+      customerTags,
       botConfig,
       imageData,
       departments,
@@ -634,7 +639,8 @@ async function processIncomingMessageInternal(msg) {
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
-  const cleanText = toWhatsAppBold(textAfterLabels);
+  const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
+  const cleanText = toWhatsAppBold(textAfterTags);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
 
@@ -645,6 +651,14 @@ async function processIncomingMessageInternal(msg) {
   if (botLabels.length > 0) {
     await Promise.all(botLabels.map(l => addLabelToConversation(from, l)));
     console.log(`[bot] Labels aplicadas a ${from}:`, botLabels);
+  }
+  const allBotTags = [...botTags, ...botNewTags];
+  if (allBotTags.length > 0) {
+    const applied = await addTagsToCustomer(from, allBotTags).catch(err => {
+      console.error(`[bot] Error agregando tags al contacto ${from}:`, err.message);
+      return [];
+    });
+    if (applied.length) console.log(`[bot] Tags de contacto aplicados a ${from}:`, applied);
   }
 
   // Se manda primero la respuesta del bot (explica la situación / por qué
@@ -718,12 +732,13 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
   const history = messages.slice(0, -1);
   const text = lastMsg.content ?? '';
 
-  const [knowledgeBase, customer, availableLabels, configDoc, departments] = await Promise.all([
+  const [knowledgeBase, customer, availableLabels, configDoc, departments, customerTags] = await Promise.all([
     getKnowledgeBasePrompt().catch(() => ''),
     getOrCreateCustomer(from, 'whatsapp'),
     getAllLabels().catch(() => []),
     getDb().collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
     getActiveDepartments().then(d => d.filter(dep => dep.id !== 'admin')).catch(() => []),
+    listAllTags().catch(() => []),
   ]);
   const botConfig = configDoc.exists ? configDoc.data() : {};
 
@@ -743,6 +758,7 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
     productInfo,
     customerContext,
     availableLabels,
+    customerTags,
     botConfig,
     imageData: null,
     departments,
@@ -751,7 +767,8 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
-  const cleanText = toWhatsAppBold(textAfterLabels);
+  const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
+  const cleanText = toWhatsAppBold(textAfterTags);
 
   await appendMessage(from, { role: 'assistant', content: cleanText });
 
@@ -760,6 +777,10 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
   }
   if (botLabels.length > 0) {
     await Promise.all(botLabels.map(l => addLabelToConversation(from, l)));
+  }
+  const allBotTags = [...botTags, ...botNewTags];
+  if (allBotTags.length > 0) {
+    await addTagsToCustomer(from, allBotTags).catch(err => console.error(`[bot] Error agregando tags al contacto ${from}:`, err.message));
   }
 
   let sent = false;

@@ -153,9 +153,9 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], botConfig = {}, imageData = null, departments = [] } = context;
+  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, departments = [] } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, departments);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, departments, customerTags);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   const response = await callAnthropicAPI({
@@ -169,7 +169,7 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return extractText(response);
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], departments = []) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], departments = [], customerTags = []) {
   const botName = botConfig.botName || 'Asistente';
   const businessName = botConfig.businessName || 'Alto Rancho';
   const personality = botConfig.botPersonality ||
@@ -248,6 +248,21 @@ Guía:
 - [LABEL:Devolución] → cambio, devolución o reembolso.
 Podés combinar varias etiquetas si aplica.`;
   }
+
+  // --- Tags de CONTACTO (persisten entre conversaciones, sirven para segmentar
+  //     difusiones). A diferencia de las etiquetas de conversación, NO son
+  //     obligatorios: solo taggeás si el mensaje da una señal clara.
+  {
+    const guide = (botConfig.customerTagsGuide || '').trim();
+    const existing = (customerTags || []).filter(Boolean);
+    prompt += `\n\n--- TAGS DE CONTACTO ---
+Si en el mensaje aparece una señal CLARA sobre quién es este cliente, agregale un tag con [TAG:nombre] (invisible para el cliente). NO inventes si no hay señal — es opcional.
+Categorías: tipo de cliente (Mayorista/Minorista/Revendedor), rubro/interés (Iluminación, Deco, Muebles…), zona o sucursal (Belgrano, Nordelta, San Isidro, Alcorta…), comportamiento (Recurrente, Primera compra, Reclamó).`;
+    if (existing.length) prompt += `\nTags que ya se usan (reusá estos si aplican, respetando cómo están escritos): ${existing.join(', ')}.`;
+    prompt += `\nSi ninguno encaja y la señal es clara, creá uno con [NEW_TAG:nombre].`;
+    if (guide) prompt += `\nGuía del negocio:\n${guide}`;
+  }
+
   return prompt;
 }
 

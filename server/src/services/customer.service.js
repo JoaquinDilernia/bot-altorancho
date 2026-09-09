@@ -1,3 +1,4 @@
+import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
 import { findCustomerByPhone, getCustomerOrders, fetchAllCustomersWithOrders } from './tiendanube.service.js';
 
@@ -64,6 +65,22 @@ export async function updateCustomerNotes(contactId, agentNotes) {
     agentNotes: agentNotes ?? '',
     updatedAt: new Date(),
   });
+}
+
+// Agrega tags al contacto sin pisar los que ya tiene (los que puso un humano
+// o el propio bot antes). El bot llama a esto cuando detecta atributos del
+// cliente para segmentar difusiones (Mayorista, Iluminación, Nordelta, etc.).
+export async function addTagsToCustomer(contactId, tags) {
+  const clean = [...new Set((tags ?? []).map(t => String(t).trim()).filter(Boolean))];
+  if (!contactId || clean.length === 0) return [];
+  const db = getDb();
+  // set+merge (no update) para no romper si el doc todavía no existe.
+  await db.collection(COLLECTION).doc(contactId).set({
+    tags: admin.firestore.FieldValue.arrayUnion(...clean),
+    updatedAt: new Date(),
+  }, { merge: true });
+  invalidateTagsCache();
+  return clean;
 }
 
 export async function enrichCustomerFromTiendaNube(contactId, forceRefresh = false) {
@@ -315,12 +332,23 @@ export async function listCustomers(filters = {}) {
   return docs.map(({ tnOrders, ...rest }) => rest);
 }
 
+// Cache en memoria: el bot pide esta lista en CADA mensaje entrante para
+// pasársela al prompt, y sin cache eso es un scan completo de la colección
+// de contactos por mensaje. Se invalida cuando se agregan tags nuevos.
+let _tagsCache = { at: 0, tags: null };
+const TAGS_CACHE_MS = 5 * 60 * 1000;
+
+export function invalidateTagsCache() { _tagsCache = { at: 0, tags: null }; }
+
 export async function listAllTags() {
+  if (_tagsCache.tags && Date.now() - _tagsCache.at < TAGS_CACHE_MS) return _tagsCache.tags;
   const db = getDb();
   const snap = await db.collection(COLLECTION).get();
   const set = new Set();
   snap.docs.forEach(doc => (doc.data().tags ?? []).forEach(t => set.add(t)));
-  return [...set].sort((a, b) => norm(a).localeCompare(norm(b)));
+  const tags = [...set].sort((a, b) => norm(a).localeCompare(norm(b)));
+  _tagsCache = { at: Date.now(), tags };
+  return tags;
 }
 
 function tsToMs(ts) {

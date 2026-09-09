@@ -106,6 +106,17 @@ export default function Config() {
                 rows={3}
               />
             </div>
+            <div className={styles.field}>
+              <label className={styles.label}>Tags de contacto — guía para el bot</label>
+              <textarea
+                className={styles.textarea}
+                value={config.customerTagsGuide ?? ''}
+                onChange={(e) => setConfig({ ...config, customerTagsGuide: e.target.value })}
+                rows={6}
+                placeholder={'Ej:\nMayorista → pide cantidades, factura A, revende.\nIluminación → consulta por lámparas, spots, artefactos.\nNordelta / Belgrano / San Isidro → según la sucursal que le queda.\nRecurrente → ya compró antes.'}
+              />
+              <p className={styles.hint}>El bot le pone tags al contacto (no a la conversación) cuando detecta una señal clara — se usan para segmentar difusiones. Esta guía se suma a los tags que ya existen. Si nada aplica y la señal es clara, el bot crea un tag nuevo.</p>
+            </div>
           </div>
         </section>
 
