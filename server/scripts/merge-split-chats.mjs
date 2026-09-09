@@ -44,11 +44,13 @@ function tsMs(ts) {
 }
 
 // Clave de deduplicación de un mensaje: el id de WhatsApp si lo tiene, si no
-// el msgId local, y como último recurso rol+contenido+minuto.
+// el msgId local, y como último recurso (mensajes viejos sin ningún id)
+// rol+contenido+segundo — con segundo en vez de minuto para no colapsar por
+// error dos mensajes distintos con el mismo texto escritos con poca diferencia.
 function msgKey(m) {
   if (m.waMsgId) return `wa:${m.waMsgId}`;
   if (m.msgId) return `id:${m.msgId}`;
-  return `x:${m.role}:${m.content ?? ''}:${Math.round(tsMs(m.timestamp) / 60000)}`;
+  return `x:${m.role}:${m.content ?? ''}:${Math.round(tsMs(m.timestamp) / 1000)}`;
 }
 
 function mergeMessages(docs) {

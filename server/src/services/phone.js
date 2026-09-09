@@ -15,8 +15,7 @@
 // solo lugar es la única forma de que ambos lados coincidan.
 //
 // Limitaciones conocidas:
-//  - Números de otros países se devuelven sin tocar (heurística pensada para
-//    un cliente de Buenos Aires).
+//  - Números de otros países se devuelven sin tocar.
 //  - Un "15" de celular sin código de área se asume área 11 (Bs. As.).
 
 export function toWaContactId(raw) {
@@ -31,7 +30,6 @@ export function toWaContactId(raw) {
   const looksArgentine =
     d.startsWith('54') ||
     d.startsWith('0') ||
-    (d.startsWith('15') && d.length === 10) ||
     d.length === 10 ||
     (d.length === 11 && d.startsWith('9'));
   if (!looksArgentine) return d;
@@ -39,16 +37,22 @@ export function toWaContactId(raw) {
   if (d.startsWith('54')) d = d.slice(2);       // sacar código de país
   else if (d.startsWith('0')) d = d.slice(1);   // sacar 0 troncal
 
-  // Sacar el "15" de celular cuando aparece entre el área y el abonado
-  // (ej. 011 15 4979-0026 -> 0111549790026 -> 11 + 49790026)...
-  const mid = d.match(/^(\d{2,4})15(\d{6,8})$/);
-  if (mid) d = mid[1] + mid[2];
-  // ...o al principio, marcado local "same-city" sin área (asumimos 11).
-  else if (d.startsWith('15') && d.length === 10) d = `11${d.slice(2)}`;
-
   // Los códigos de área argentinos nunca empiezan con 9, así que un 9
   // adelante siempre es el prefijo de celular — lo agregamos nosotros después.
   d = d.replace(/^9+/, '');
+
+  // Sacar el "15" de celular de la notación de discado local:
+  //  - <área>15<abonado>: área + abonado SIEMPRE suma 10 dígitos en Argentina,
+  //    así que con el "15" en el medio el total es exactamente 12. Un número
+  //    de 10 dígitos NO lleva 15 intercalado (es área + abonado a secas, ej.
+  //    "351 5163920" de Córdoba, o un abonado de Bs. As. que arranca con 15).
+  //  - "15" + 8 dígitos sin área: se asume Buenos Aires (área 11).
+  if (d.length === 12) {
+    const m = d.match(/^(\d{2,4})15(\d{6,8})$/);
+    if (m && m[1].length + m[2].length === 10) d = m[1] + m[2];
+  } else if (d.length === 10 && d.startsWith('15')) {
+    d = `11${d.slice(2)}`;
+  }
 
   return `549${d}`;
 }
