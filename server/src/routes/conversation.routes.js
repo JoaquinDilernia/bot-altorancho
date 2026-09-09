@@ -31,19 +31,17 @@ import { transcribeAudio } from '../services/transcription.service.js';
 import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
 import { generateConversationSummary } from '../services/claude.service.js';
+import { toWaContactId } from '../services/phone.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
 
-// Normalizes Argentine mobile numbers to E.164 without '+' for the WhatsApp API.
-// Accepts: 5491112345678 | +5491112345678 | 1112345678 | 01112345678 | 91112345678
+// Se mantiene el nombre por compatibilidad con los imports existentes
+// (customer.routes.js). La lógica vive en phone.js para que el webhook
+// entrante y todos los envíos salientes canonicen el teléfono EXACTAMENTE
+// igual — si no, se duplican las conversaciones (ver phone.js).
 export function normalizeArgPhone(raw) {
-  let d = raw.trim().replace(/[^\d]/g, '');
-  if (d.startsWith('54')) return d;           // already has country code
-  if (d.startsWith('0')) d = d.slice(1);      // strip local trunk 0
-  if (d.startsWith('9') && d.length === 11) return `54${d}`;   // 9 + area + number
-  if (d.length === 10) return `549${d}`;      // area (2-4 digits) + number, add mobile 9
-  return `54${d}`;                            // fallback: just prepend country code
+  return toWaContactId(raw);
 }
 
 // ---- Media proxy (must be before /:contactId routes) ----
@@ -77,7 +75,7 @@ router.post('/start', async (req, res) => {
       return res.status(400).json({ error: 'phone y templateName requeridos' });
     }
     const normalizedPhone = normalizeArgPhone(phone);
-    if (normalizedPhone.length < 10 || normalizedPhone.length > 15) {
+    if (!normalizedPhone || normalizedPhone.length < 10 || normalizedPhone.length > 15) {
       return res.status(400).json({ error: `Número de teléfono inválido: "${normalizedPhone}". Usá formato internacional, ej: 5491112345678` });
     }
 

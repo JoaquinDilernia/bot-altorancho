@@ -3,6 +3,7 @@ import { getDb } from './firebase.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
 import { getOrderById } from './tiendanube.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus, markNotified } from './conversation.service.js';
+import { toWaContactId } from './phone.js';
 
 const FOLLOWUP_COLLECTION = 'bot-altorancho_pickup_followups';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -22,15 +23,11 @@ const PICKUP_FIELDS = 'id,number,status,payment_status,shipping_status,shipping_
 // Branch keywords from the actual TiendaNube shipping option names
 const BRANCH_KEYWORDS = ['SAN ISIDRO', 'BELGRANO', 'ALCORTA', 'NORDELTA', 'ALTORANCHO'];
 
+// Se mantiene el nombre por compatibilidad con los imports existentes.
+// La lógica vive en phone.js para que el webhook entrante y los envíos
+// salientes canonicen el teléfono EXACTAMENTE igual (ver phone.js).
 export function normalizePhone(raw) {
-  if (!raw) return null;
-  let d = String(raw).trim().replace(/[^\d]/g, '');
-  if (!d) return null;
-  if (d.startsWith('54') && d.length >= 12) return d;
-  if (d.startsWith('0')) return `549${d.slice(1)}`;
-  if (d.startsWith('15')) return `5491${d.slice(2)}`;
-  if (d.length === 10) return `549${d}`;
-  return d;
+  return toWaContactId(raw);
 }
 
 function isPickupOrder(order) {
@@ -122,7 +119,7 @@ export async function sendBulkOrders({ orders, templateName, languageCode, param
   const results = [];
 
   for (const order of orders) {
-    const phone = order.customer?.phone;
+    const phone = toWaContactId(order.customer?.phone);
     if (!phone) {
       results.push({ number: order.number, status: 'skipped', reason: 'Sin teléfono' });
       continue;
@@ -229,7 +226,8 @@ async function trackPickupFollowups(orders, results) {
 }
 
 async function sendFollowupTemplate(record, tpl, paramTemplate) {
-  if (!record.phone) throw new Error('Sin teléfono');
+  const phone = toWaContactId(record.phone);
+  if (!phone) throw new Error('Sin teléfono');
   const bodyParams = (paramTemplate ?? []).map(t =>
     t
       .replace('{{name}}',   record.customerName ?? 'Cliente')
@@ -237,7 +235,7 @@ async function sendFollowupTemplate(record, tpl, paramTemplate) {
       .replace('{{branch}}', record.branch ?? '')
       .replace('{{total}}',  record.total ?? '')
   );
-  await sendWhatsAppTemplate(record.phone, tpl.name, tpl.language ?? 'es_AR', bodyParams);
+  await sendWhatsAppTemplate(phone, tpl.name, tpl.language ?? 'es_AR', bodyParams);
   console.log(`[notifications] Followup "${tpl.name}" enviado a pedido #${record.orderNumber}`);
   return true;
 }

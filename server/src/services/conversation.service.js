@@ -42,6 +42,7 @@ export async function getOrCreateConversation(contactId, channel, contactName = 
   };
 
   await docRef.set(newConversation);
+  console.log(`[conv] Nueva conversación creada: ${contactId} (${channel})`);
   return { id: contactId, ...newConversation };
 }
 

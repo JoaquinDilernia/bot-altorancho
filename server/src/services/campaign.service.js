@@ -4,6 +4,7 @@ import { getDb } from './firebase.service.js';
 import { listCustomers } from './customer.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus } from './conversation.service.js';
 import { sendWhatsAppTemplate } from './meta.service.js';
+import { toWaContactId } from './phone.js';
 
 const CAMPAIGNS = 'bot-altorancho_campaigns';
 const SENDS = 'bot-altorancho_campaign_sends';
@@ -222,6 +223,10 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
   // no espera a que termine de mandarle a todos (puede ser una lista larga).
   (async () => {
     for (const contact of recipients) {
+      // El id del cliente ya debería estar canónico, pero lo forzamos igual:
+      // si la difusión crea la conversación con un formato distinto al que
+      // usa el webhook entrante, la respuesta del cliente cae en otro chat.
+      contact.contactId = toWaContactId(contact.contactId) ?? contact.contactId;
       const sendId = sendDocId(campaignId, contact.contactId);
       try {
         let shortCode = null;

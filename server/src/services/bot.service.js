@@ -24,6 +24,7 @@ import {
 import { getAllLabels, createLabel } from './label.service.js';
 import { getActiveDepartments } from './department.service.js';
 import { getDb } from './firebase.service.js';
+import { toWaContactId } from './phone.js';
 
 // Captura números Odoo (S08121), TiendaNube (TN1999675391) y números puros.
 // El número puede venir con o sin "#" y en cualquier parte del mensaje — NO
@@ -370,6 +371,16 @@ async function handleMenuInteraction({ from, channel, interactiveId, conversatio
 const contactLocks = new Map();
 
 export function processIncomingMessage(msg) {
+  // Canonicalizar el teléfono ni bien entra. Meta manda el "from" de los
+  // números argentinos a veces con el 9 de celular y a veces sin él; si no
+  // lo normalizamos acá, la respuesta del cliente cae en un documento de
+  // conversación distinto al de la plantilla que le mandamos y se ve como
+  // dos chats separados para la misma persona. Solo aplica a WhatsApp — el
+  // "from" de Instagram es un ID de usuario, no un teléfono.
+  if (msg.channel === 'whatsapp' && msg.from) {
+    const canonical = toWaContactId(msg.from);
+    if (canonical) msg = { ...msg, from: canonical };
+  }
   const contactId = msg.from;
   const previous = contactLocks.get(contactId) ?? Promise.resolve();
   const current = previous

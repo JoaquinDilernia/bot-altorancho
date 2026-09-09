@@ -8,6 +8,7 @@ import {
 import { processIncomingMessage } from '../services/bot.service.js';
 import { updateMessageStatusByWaMsgId } from '../services/conversation.service.js';
 import { updateCampaignSendStatusByWaMsgId } from '../services/campaign.service.js';
+import { toWaContactId } from '../services/phone.js';
 
 const router = Router();
 
@@ -43,7 +44,11 @@ router.post('/', async (req, res) => {
       // Handle delivery status updates
       const statusUpdate = parseWhatsAppStatusUpdate(body);
       if (statusUpdate) {
-        const { waMsgId, status, recipientId } = statusUpdate;
+        const { waMsgId, status, recipientId: rawRecipientId } = statusUpdate;
+        // Mismo motivo que en processIncomingMessage: el recipient_id que
+        // devuelve Meta puede venir con o sin el 9, y la conversación está
+        // indexada por el teléfono canónico.
+        const recipientId = toWaContactId(rawRecipientId) ?? rawRecipientId;
         // Map WA statuses to our internal statuses
         // 'sent' → 'sent', 'delivered' → 'delivered', 'read' → 'read', 'failed' → 'error'
         const mapped = status === 'failed' ? 'error' : status;

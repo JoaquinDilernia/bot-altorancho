@@ -88,6 +88,7 @@ router.post('/', async (req, res) => {
     const { phone, channel = 'whatsapp', contactName, email, tags } = req.body;
     if (!phone?.trim()) return res.status(400).json({ error: 'phone requerido' });
     const contactId = channel === 'whatsapp' ? normalizeArgPhone(phone) : phone.trim();
+    if (!contactId) return res.status(400).json({ error: `Número de teléfono inválido: "${phone}"` });
     const customer = await createCustomer({ contactId, channel, contactName, email, tags });
     res.status(201).json({ customer });
   } catch (err) {

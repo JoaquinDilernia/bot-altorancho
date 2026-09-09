@@ -455,6 +455,7 @@ export async function importCustomersCsv(rows, { normalizePhone } = {}) {
     if (!rawId) { skipped++; continue; }
     const channel = (iChannel >= 0 ? cols[iChannel]?.trim() : '') || 'whatsapp';
     const contactId = channel === 'whatsapp' && normalizePhone ? normalizePhone(rawId) : rawId;
+    if (!contactId) { skipped++; continue; }
     const name = iName >= 0 ? cols[iName]?.trim() || null : null;
     const email = iEmail >= 0 ? cols[iEmail]?.trim() || null : null;
     const tags = iTags >= 0
