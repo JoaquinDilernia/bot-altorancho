@@ -24,6 +24,7 @@ import {
   sendWhatsAppTemplate,
   sendWhatsAppMedia,
   uploadMetaMedia,
+  ensureWhatsAppImageSize,
   getMetaMediaStream,
   downloadMetaMedia,
 } from '../services/meta.service.js';
@@ -411,8 +412,11 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     let waMsgId = null;
     try {
       if (channel === 'whatsapp') {
-        metaMediaId = await uploadMetaMedia(buffer, mimetype);
-        if (metaMediaId) waMsgId = await sendWhatsAppMedia(contactId, metaMediaId, mimetype, originalname, replyTo?.waMsgId ?? null);
+        const { buffer: uploadBuffer, mimeType: uploadMimetype } = mediaType === 'image'
+          ? await ensureWhatsAppImageSize(buffer, mimetype)
+          : { buffer, mimeType: mimetype };
+        metaMediaId = await uploadMetaMedia(uploadBuffer, uploadMimetype);
+        if (metaMediaId) waMsgId = await sendWhatsAppMedia(contactId, metaMediaId, uploadMimetype, originalname, replyTo?.waMsgId ?? null);
       }
     } catch (sendErr) {
       windowExpired = channel === 'whatsapp' && isWindowExpiredError(sendErr);

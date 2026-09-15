@@ -1,7 +1,13 @@
 import axios from 'axios';
 import crypto from 'crypto';
+import sharp from 'sharp';
 
 const META_API_URL = 'https://graph.facebook.com/v20.0';
+// Límite real de WhatsApp Cloud API para mensajes de imagen (no está
+// documentado en el multer del router, que acepta hasta 16MB para poder
+// cubrir video/audio/documento — sin este recompresión, una foto de celular
+// moderna (8-12MB) se guarda en el panel pero Meta la rechaza al enviarla.
+const WHATSAPP_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const SEND_MAX_RETRIES = 3;
 // Solo reintentamos casos donde es seguro asumir que el mensaje NUNCA llegó
@@ -204,6 +210,30 @@ export async function sendWhatsAppTemplate(to, templateName, language = 'es_AR',
     { headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}`, 'Content-Type': 'application/json' } }
   );
   return data.messages?.[0]?.id ?? null;
+}
+
+// Si es una imagen y supera el límite de WhatsApp, la re-comprime como JPEG
+// bajando resolución/calidad hasta entrar. No toca video/audio/documento.
+export async function ensureWhatsAppImageSize(buffer, mimeType) {
+  if (!mimeType?.startsWith('image/') || buffer.length <= WHATSAPP_MAX_IMAGE_BYTES) {
+    return { buffer, mimeType };
+  }
+  let output = buffer;
+  let width = 2000;
+  let quality = 82;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    output = await sharp(buffer)
+      .rotate() // respeta la orientación EXIF antes de reescalar
+      .resize({ width, withoutEnlargement: true })
+      .jpeg({ quality })
+      .toBuffer();
+    if (output.length <= WHATSAPP_MAX_IMAGE_BYTES) {
+      return { buffer: output, mimeType: 'image/jpeg' };
+    }
+    width = Math.round(width * 0.75);
+    quality = Math.max(quality - 15, 40);
+  }
+  return { buffer: output, mimeType: 'image/jpeg' };
 }
 
 export async function uploadMetaMedia(buffer, mimeType) {
