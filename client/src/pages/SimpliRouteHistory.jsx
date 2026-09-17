@@ -3,6 +3,7 @@ import { authFetch, BASE_URL } from '../lib/api';
 import styles from './SimpliRouteHistory.module.css';
 
 const EVENT_LABELS = {
+  scheduled: 'Programado',
   route_start: 'En ruta',
   checkout: 'Checkout',
 };
@@ -40,7 +41,7 @@ export default function SimpliRouteHistory() {
       <header className={styles.header}>
         <div>
           <h1 className={styles.title}>Historial SimpliRoute</h1>
-          <p className={styles.subtitle}>Envíos automáticos disparados por SimpliRoute (en ruta / entregado / no entregado)</p>
+          <p className={styles.subtitle}>Envíos automáticos disparados por SimpliRoute (programado / en ruta / entregado / no entregado)</p>
         </div>
         <button className={styles.btnFetch} onClick={load} disabled={loading}>
           {loading ? 'Actualizando…' : '↻ Actualizar'}

@@ -22,6 +22,7 @@ const TRACKING_URL_BASE = 'https://livetracking.simpliroute.com/widget/account/1
 const TEMPLATE_ON_ROUTE = 'pedido_en_camino_v2';
 const TEMPLATE_DELIVERED = 'pedido_entregado_v2';
 const TEMPLATE_FAILED = 'pedido_no_entregado';
+const TEMPLATE_SCHEDULED = 'pedido_programado';
 
 const SUCCESS_VALUES = new Set(['success', 'successful', 'exitoso', 'delivered', 'completed', 'complete']);
 const FAILED_VALUES = new Set(['failed', 'failure', 'fallido', 'undelivered', 'unsuccessful']);
@@ -167,7 +168,7 @@ async function logSimpliRouteNotification(entry) {
 // Envía la plantilla correspondiente al cliente de un pedido. Reutilizado
 // tanto por el checkout (un pedido) como por el inicio de ruta (N pedidos).
 // `payload` es la visita (trae contact_phone, reference, etc.).
-async function notifyOrder(orderNumber, templateName, event, payload = {}, botConfig = {}) {
+async function notifyOrder(orderNumber, templateName, event, payload = {}, botConfig = {}, { includeTrackingButton = true } = {}) {
   const trackingUrl = buildTrackingUrl(payload, orderNumber);
   const base = { event, templateName, orderNumber, trackingUrl: trackingUrl ?? null };
 
@@ -183,8 +184,10 @@ async function notifyOrder(orderNumber, templateName, event, payload = {}, botCo
   const bodyParams = [String(orderNumber)];
   // El botón de seguimiento sólo se manda si está prendido en Config Y las
   // plantillas de Meta ya tienen el botón URL "Ver seguimiento" aprobado.
+  // "Programado" (pedido_programado) no tiene botón — todavía no hay nada
+  // que rastrear, el link llega recién con el aviso de "en camino".
   const trackingCode = buildTrackingCode(payload, orderNumber);
-  const urlButtonParam = botConfig.simpliRouteTrackingButton && trackingCode ? trackingCode : null;
+  const urlButtonParam = includeTrackingButton && botConfig.simpliRouteTrackingButton && trackingCode ? trackingCode : null;
 
   // Mismo patrón que sendBulkOrders (notifications.service.js): dejar
   // rastro en la conversación del cliente antes de mandar por Meta, para
@@ -242,18 +245,16 @@ export async function handleSimpliRouteCheckout(payload) {
   await notifyOrder(orderNumber, isSuccess ? TEMPLATE_DELIVERED : TEMPLATE_FAILED, 'checkout', payload, botConfig);
 }
 
-// Evento "Inicio de ruta": el conductor arrancó el reparto del día — trae
-// (se asume) la lista completa de visitas de esa ruta. Se notifica a cada
-// cliente que su pedido salió hoy en reparto.
-export async function handleSimpliRouteRouteStart(payload) {
-  console.log('[simpliroute] inicio de ruta payload recibido:', JSON.stringify(payload));
-
+// Recorre las visitas de un payload de ruta (route_created / route_started —
+// ambos traen el mismo shape: visit_ids + info_visits con reference/contact)
+// y notifica a cada cliente con la plantilla indicada.
+async function notifyRouteVisits(payload, templateName, event, logLabel, notifyOpts = {}) {
   const visits = findVisitsArray(payload) ?? [];
   if (visits.length === 0) {
     // Puede que el payload real no traiga la lista de visitas inline — si
     // pasa esto seguido, revisar el log de arriba y decidir si hay que
     // pedirle a SimpliRoute el detalle de la ruta por API en vez de esperarlo acá.
-    console.warn('[simpliroute] inicio de ruta: no se encontró un array de visitas en el payload');
+    console.warn(`[simpliroute] ${logLabel}: no se encontró un array de visitas en el payload`);
     return;
   }
 
@@ -261,12 +262,30 @@ export async function handleSimpliRouteRouteStart(payload) {
   for (const visit of visits) {
     const orderNumber = extractOrderNumber(visit);
     if (!orderNumber) {
-      console.warn('[simpliroute] inicio de ruta: visita sin número de pedido identificable:', JSON.stringify(visit));
+      console.warn(`[simpliroute] ${logLabel}: visita sin número de pedido identificable:`, JSON.stringify(visit));
       continue;
     }
-    await notifyOrder(orderNumber, TEMPLATE_ON_ROUTE, 'route_start', visit, botConfig);
+    await notifyOrder(orderNumber, templateName, event, visit, botConfig, notifyOpts);
     await new Promise(r => setTimeout(r, 200)); // margen para no ráfagar la API de Meta
   }
+}
+
+// Evento "Inicio de ruta": el conductor arrancó el reparto del día — trae
+// (se asume) la lista completa de visitas de esa ruta. Se notifica a cada
+// cliente que su pedido salió hoy en reparto.
+export async function handleSimpliRouteRouteStart(payload) {
+  console.log('[simpliroute] inicio de ruta payload recibido:', JSON.stringify(payload));
+  await notifyRouteVisits(payload, TEMPLATE_ON_ROUTE, 'route_start', 'inicio de ruta');
+}
+
+// Evento "Creación de ruta" (route_created): se dispara cuando se guarda el
+// plan y se envían las rutas a los conductores — es el momento en que
+// SimpliRoute marca la visita como "Programado" (ver plantilla nativa en
+// Ajustes > Comunicaciones). Mismo shape de payload que route_started.
+// Sin botón de seguimiento: todavía no hay nada que rastrear.
+export async function handleSimpliRouteScheduled(payload) {
+  console.log('[simpliroute] programado (creación de ruta) payload recibido:', JSON.stringify(payload));
+  await notifyRouteVisits(payload, TEMPLATE_SCHEDULED, 'scheduled', 'programado', { includeTrackingButton: false });
 }
 
 // Últimos envíos disparados por SimpliRoute (enviados, con error, u

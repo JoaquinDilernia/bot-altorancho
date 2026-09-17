@@ -3,6 +3,7 @@ import {
   verifySimpliRouteToken,
   handleSimpliRouteCheckout,
   handleSimpliRouteRouteStart,
+  handleSimpliRouteScheduled,
 } from '../services/simpliroute.service.js';
 
 const router = Router();
@@ -30,6 +31,18 @@ router.post('/route-start', (req, res) => {
   res.sendStatus(200);
   handleSimpliRouteRouteStart(req.body).catch(err =>
     console.error('[simpliroute-webhook] Error procesando inicio de ruta:', err)
+  );
+});
+
+// Configurar en SimpliRoute con el evento "Creación de ruta" (route_created).
+router.post('/scheduled', (req, res) => {
+  if (!verifySimpliRouteToken(req)) {
+    console.warn('[simpliroute-webhook] Token inválido o ausente (scheduled)');
+    return res.sendStatus(401);
+  }
+  res.sendStatus(200);
+  handleSimpliRouteScheduled(req.body).catch(err =>
+    console.error('[simpliroute-webhook] Error procesando programado:', err)
   );
 });
 
