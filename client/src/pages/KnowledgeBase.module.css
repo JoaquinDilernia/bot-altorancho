@@ -115,6 +115,15 @@
   gap: var(--space-3);
 }
 
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
 /* ---- Empty ---- */
 .empty { font-size: var(--font-size-sm); color: var(--color-text-muted); }
 
@@ -177,6 +186,15 @@
 }
 .cardStatusActive { background: var(--color-success-bg); color: var(--color-success); }
 .cardStatusOff { background: var(--color-surface-alt); color: var(--color-text-faint); }
+
+.cardProactive {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  border-radius: var(--radius-full);
+  padding: 2px var(--space-2);
+  background: #fff7ed;
+  color: #c2410c;
+}
 
 .cardTitle {
   font-size: var(--font-size-md);
