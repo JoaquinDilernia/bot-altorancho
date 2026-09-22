@@ -79,7 +79,7 @@ export async function addTagsToCustomer(contactId, tags) {
     tags: admin.firestore.FieldValue.arrayUnion(...clean),
     updatedAt: new Date(),
   }, { merge: true });
-  invalidateTagsCache();
+  await registrarTags(clean);
   invalidateCustomersCache();
   return clean;
 }
@@ -363,12 +363,59 @@ const TAGS_CACHE_MS = 5 * 60 * 1000;
 
 export function invalidateTagsCache() { _tagsCache = { at: 0, tags: null }; }
 
-export async function listAllTags() {
-  if (_tagsCache.tags && Date.now() - _tagsCache.at < TAGS_CACHE_MS) return _tagsCache.tags;
+// Índice de etiquetas: un único documento con la lista de nombres.
+//
+// Antes esto se resolvía leyendo la colección entera de contactos para juntar
+// ~20 strings. El bot pide las etiquetas en CADA mensaje entrante
+// (bot.service.js), así que eso eran 10.000+ lecturas de Firestore cada vez
+// que vencía el cache: ~1,8M de lecturas por día, el grueso de la factura.
+// Ahora es 1 lectura. El índice se mantiene al vuelo en registrarTags().
+const TAGS_DOC = 'tags_index';
+const CONFIG_COLLECTION = 'bot-altorancho_config';
+
+function tagsIndexRef() {
+  return getDb().collection(CONFIG_COLLECTION).doc(TAGS_DOC);
+}
+
+/** Suma etiquetas nuevas al índice. Barato: un arrayUnion sobre un doc. */
+async function registrarTags(tags) {
+  const limpias = [...new Set((tags ?? []).map(t => String(t).trim()).filter(Boolean))];
+  if (limpias.length === 0) return;
+  try {
+    await tagsIndexRef().set(
+      { tags: admin.firestore.FieldValue.arrayUnion(...limpias), updatedAt: new Date() },
+      { merge: true }
+    );
+    invalidateTagsCache();
+  } catch (err) {
+    // Que no rompa la operación principal: el índice se puede reconstruir.
+    console.error('[customer] No se pudo actualizar el índice de etiquetas:', err.message);
+  }
+}
+
+/**
+ * Reconstruye el índice desde los contactos. Es la única operación que lee la
+ * colección completa, así que se llama solo a mano o cuando el índice no existe
+ * (por ejemplo la primera vez, o si se borran etiquetas y quedan nombres viejos).
+ */
+export async function rebuildTagsIndex() {
   const docs = await fetchAllCustomerDocs();
   const set = new Set();
-  docs.forEach(c => (c.tags ?? []).forEach(t => set.add(t)));
-  const tags = [...set].sort((a, b) => norm(a).localeCompare(norm(b)));
+  docs.forEach(c => (c.tags ?? []).forEach(t => set.add(String(t).trim())));
+  const tags = [...set].filter(Boolean);
+  await tagsIndexRef().set({ tags, updatedAt: new Date() });
+  invalidateTagsCache();
+  return tags.sort((a, b) => norm(a).localeCompare(norm(b)));
+}
+
+export async function listAllTags() {
+  if (_tagsCache.tags && Date.now() - _tagsCache.at < TAGS_CACHE_MS) return _tagsCache.tags;
+
+  const snap = await tagsIndexRef().get();
+  const tags = snap.exists && Array.isArray(snap.data()?.tags)
+    ? [...snap.data().tags].sort((a, b) => norm(a).localeCompare(norm(b)))
+    : await rebuildTagsIndex(); // índice todavía no creado
+
   _tagsCache = { at: Date.now(), tags };
   return tags;
 }
@@ -414,6 +461,7 @@ export async function createCustomer({ contactId, channel, contactName, email, t
     updatedAt: new Date(),
   };
   await docRef.set(customer);
+  await registrarTags(customer.tags);
   invalidateCustomersCache();
   return { id: contactId, ...customer };
 }
@@ -426,6 +474,7 @@ export async function updateCustomer(contactId, patch) {
   if (patch.tags !== undefined) update.tags = Array.isArray(patch.tags) ? patch.tags : [];
   if (patch.agentNotes !== undefined) update.agentNotes = patch.agentNotes ?? '';
   await db.collection(COLLECTION).doc(contactId).update(update);
+  if (update.tags) await registrarTags(update.tags);
   invalidateCustomersCache();
   return getCustomerProfile(contactId);
 }
@@ -543,6 +592,10 @@ export async function importCustomersCsv(rows, { normalizePhone } = {}) {
   }
 
   invalidateCustomersCache();
+  // Una importación puede traer etiquetas nuevas en cualquier fila; como ya es
+  // una operación pesada y poco frecuente, rehacemos el índice completo.
+  await rebuildTagsIndex().catch(err =>
+    console.error('[customer] No se pudo rehacer el índice de etiquetas:', err.message));
   return { created, updated, skipped, errors };
 }
 

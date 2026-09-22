@@ -6,6 +6,7 @@ import {
   enrichCustomerFromTiendaNube,
   listCustomers,
   listAllTags,
+  rebuildTagsIndex,
   createCustomer,
   updateCustomer,
   deleteCustomer,
@@ -55,6 +56,16 @@ router.post('/sync-tiendanube', async (req, res) => {
 router.get('/tags', async (req, res) => {
   try {
     res.json({ tags: await listAllTags() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Rehace el índice de etiquetas desde los contactos. Sirve para limpiar
+// etiquetas que ya no usa nadie (el índice sólo suma, nunca resta).
+router.post('/tags/rebuild', async (req, res) => {
+  try {
+    res.json({ tags: await rebuildTagsIndex() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
