@@ -3,7 +3,10 @@ import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
 import { listCustomers } from './customer.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus } from './conversation.service.js';
-import { sendWhatsAppTemplate } from './meta.service.js';
+import { sendWhatsAppTemplate, uploadMetaMedia, uploadTemplateSampleImage, ensureWhatsAppImageSize } from './meta.service.js';
+import { createTemplate, syncTemplateStatus } from './template.service.js';
+import { TEMPLATE_VARS, sampleValues } from './templateVars.js';
+import { validateComposer, buildRecipientMessage, assertSendable } from './campaignMessage.js';
 import { toWaContactId } from './phone.js';
 
 const CAMPAIGNS = 'bot-altorancho_campaigns';
@@ -140,20 +143,22 @@ export async function resolveSegment(segment = {}) {
   return listCustomers(segmentToFilters(segment));
 }
 
-export async function createCampaign({ name, templateName, language, category, paramsTemplate, targetUrl, segment, createdBy }) {
-  if (!name?.trim() || !templateName?.trim()) {
-    const e = new Error('name y templateName son requeridos');
-    e.status = 400;
-    throw e;
-  }
-  const db = getDb();
-  const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
-  const doc = {
+const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
+
+function buildCampaignDoc({ name, templateName, language, category, paramsTemplate, targetUrl, segment, createdBy,
+  varOrder = null, linkMode = null, templateHasImage = false, headerImage = null, status = 'draft', templateStatus = 'APPROVED' }) {
+  return {
     name: name.trim(),
     templateName: templateName.trim(),
     language: language || 'es_AR',
     category: category ?? null,
     paramsTemplate: Array.isArray(paramsTemplate) ? paramsTemplate : [],
+    varOrder: Array.isArray(varOrder) ? varOrder : null,
+    linkMode: linkMode ?? null,
+    templateHasImage: !!templateHasImage,
+    headerImage,
+    templateStatus,
+    templateRejectedReason: null,
     targetUrl: targetUrl?.trim() || null,
     segment: {
       q: segment?.q ?? null,
@@ -168,14 +173,100 @@ export async function createCampaign({ name, templateName, language, category, p
       lastOrderMaxDays: num(segment?.lastOrderMaxDays),
       lastOrderMinDays: num(segment?.lastOrderMinDays),
     },
-    status: 'draft',
+    status,
     createdBy: createdBy ?? null,
     createdAt: new Date(),
     sentAt: null,
     stats: { total: 0, sent: 0, failed: 0, delivered: 0, read: 0, clicked: 0 },
   };
-  const ref = await db.collection(CAMPAIGNS).add(doc);
+}
+
+export async function createCampaign(input) {
+  if (!input.name?.trim() || !input.templateName?.trim()) {
+    const e = new Error('name y templateName son requeridos');
+    e.status = 400;
+    throw e;
+  }
+  const doc = buildCampaignDoc(input);
+  const ref = await getDb().collection(CAMPAIGNS).add(doc);
   return { id: ref.id, ...doc };
+}
+
+async function prepareImage(file) {
+  if (!file) return null;
+  const { buffer, mimeType } = await ensureWhatsAppImageSize(file.buffer, file.mimetype);
+  return { buffer, mimeType };
+}
+
+/** Difusión + plantilla nueva en un solo paso. Si Meta rechaza la plantilla
+    no se crea nada (createTemplate strict) y el error vuelve al formulario. */
+export async function createCampaignWithTemplate({ data, imageFile, publicBaseUrl, createdBy }) {
+  const { name, templateName, category, bodyText, linkMode, buttonText, targetUrl, segment } = data ?? {};
+  if (!name?.trim()) { const e = new Error('El nombre de la difusión es obligatorio'); e.status = 400; throw e; }
+  const { body, order } = validateComposer({ templateName, bodyText, linkMode, buttonText, targetUrl, publicBaseUrl });
+
+  const image = await prepareImage(imageFile);
+  let handle = null;
+  let mediaId = null;
+  if (image) {
+    handle = await uploadTemplateSampleImage(image.buffer, image.mimeType);
+    mediaId = await uploadMetaMedia(image.buffer, image.mimeType);
+  }
+
+  const labels = Object.fromEntries(TEMPLATE_VARS.map(v => [v.key, v.label]));
+  const tpl = await createTemplate({
+    name: templateName,
+    displayName: name,
+    bodyText: body,
+    language: 'es_AR',
+    category: category === 'UTILITY' ? 'UTILITY' : 'MARKETING',
+    params: order.map(k => labels[k]),
+    bodyExamples: sampleValues(order),
+    header: handle ? { format: 'IMAGE', handle } : null,
+    button: linkMode === 'button' ? { text: buttonText.trim(), urlBase: publicBaseUrl } : null,
+    varOrder: order,
+    linkMode,
+    strict: true,
+  });
+
+  const approved = tpl.metaStatus === 'APPROVED';
+  return createCampaign({
+    name, templateName, language: 'es_AR', category: tpl.category,
+    paramsTemplate: [], varOrder: order, linkMode,
+    targetUrl: linkMode === 'none' ? null : targetUrl,
+    segment, createdBy,
+    templateHasImage: !!handle,
+    headerImage: mediaId ? { mediaId, uploadedAt: new Date() } : null,
+    status: approved ? 'draft' : 'pending_template',
+    templateStatus: tpl.metaStatus,
+  });
+}
+
+export async function setCampaignImage(campaignId, imageFile) {
+  const campaign = await getCampaign(campaignId);
+  if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
+  if (!['draft', 'pending_template'].includes(campaign.status)) {
+    const e = new Error('Sólo se puede cambiar la imagen antes de enviar'); e.status = 409; throw e;
+  }
+  if (!imageFile) { const e = new Error('No se recibió la imagen'); e.status = 400; throw e; }
+  const image = await prepareImage(imageFile);
+  const mediaId = await uploadMetaMedia(image.buffer, image.mimeType);
+  const headerImage = { mediaId, uploadedAt: new Date() };
+  await getDb().collection(CAMPAIGNS).doc(campaignId).update({ headerImage });
+  return { ...campaign, headerImage };
+}
+
+export async function refreshTemplateStatus(campaignId) {
+  const campaign = await getCampaign(campaignId);
+  if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
+  if (campaign.status !== 'pending_template') return campaign;
+  const { status, rejectedReason } = await syncTemplateStatus(campaign.templateName, campaign.language);
+  const update = {};
+  if (status === 'APPROVED') Object.assign(update, { status: 'draft', templateStatus: status });
+  else if (status === 'REJECTED') Object.assign(update, { status: 'template_rejected', templateStatus: status, templateRejectedReason: rejectedReason ?? null });
+  if (Object.keys(update).length === 0) return campaign;
+  await getDb().collection(CAMPAIGNS).doc(campaignId).update(update);
+  return { ...campaign, ...update };
 }
 
 export async function deleteCampaign(id) {
@@ -185,14 +276,6 @@ export async function deleteCampaign(id) {
   const batch = db.batch();
   snap.docs.forEach(d => batch.delete(d.ref));
   if (!snap.empty) await batch.commit();
-}
-
-function interpolate(template, contact, link) {
-  return (template ?? '')
-    .replace(/\{\{\s*nombre\s*\}\}/gi, contact.contactName || 'Cliente')
-    .replace(/\{\{\s*link\s*\}\}/gi, link ?? '')
-    .replace(/\{\{\s*pedidos\s*\}\}/gi, String(contact.tnOrderCount ?? 0))
-    .replace(/\{\{\s*gastado\s*\}\}/gi, contact.tnTotalSpent != null ? String(Math.round(contact.tnTotalSpent)) : '0');
 }
 
 /**
@@ -210,6 +293,7 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
   const campaign = await getCampaign(campaignId);
   if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
   if (campaign.status !== 'draft') { const e = new Error('Esta campaña ya se envió'); e.status = 409; throw e; }
+  assertSendable(campaign, { publicBaseUrl });
 
   const recipients = (await resolveSegment(campaign.segment)).filter(c => c.channel === 'whatsapp');
 
@@ -231,23 +315,23 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
       try {
         let shortCode = null;
         let link = campaign.targetUrl;
-        if (campaign.targetUrl && publicBaseUrl) {
+        // linkMode null = campaña legacy: se comporta como antes (link si hay targetUrl)
+        if (campaign.targetUrl && publicBaseUrl && campaign.linkMode !== 'none') {
           shortCode = await createShortLink({ targetUrl: campaign.targetUrl, campaignId, contactId: contact.contactId });
           link = `${publicBaseUrl}/r/${shortCode}`;
         }
-        const params = campaign.paramsTemplate.map(tpl => interpolate(tpl, contact, link));
+        const { params, urlButtonParam, headerImageId } = buildRecipientMessage({ campaign, contact, link, shortCode });
 
         await getOrCreateConversation(contact.contactId, 'whatsapp', contact.contactName);
         const msgId = crypto.randomUUID();
-        const templateText = params.filter(Boolean).length > 0
-          ? `[Difusión: ${campaign.templateName}] ${params.join(' | ')}`
-          : `[Difusión: ${campaign.templateName}]`;
+        const prefix = `[Difusión: ${campaign.templateName}]${headerImageId ? ' [Imagen]' : ''}`;
+        const templateText = params.filter(Boolean).length > 0 ? `${prefix} ${params.join(' | ')}` : prefix;
         await appendMessage(contact.contactId, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', sentBy: campaign.createdBy });
 
         let sendError = null;
         let waMsgId = null;
         try {
-          waMsgId = await sendWhatsAppTemplate(contact.contactId, campaign.templateName, campaign.language, params);
+          waMsgId = await sendWhatsAppTemplate(contact.contactId, campaign.templateName, campaign.language, params, urlButtonParam, headerImageId);
         } catch (err) {
           sendError = err.response?.data?.error?.message ?? err.message;
         }

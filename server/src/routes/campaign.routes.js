@@ -1,15 +1,26 @@
 import { Router } from 'express';
+import multer from 'multer';
 import {
   listCampaigns,
   getCampaign,
   getCampaignSends,
   createCampaign,
+  createCampaignWithTemplate,
+  setCampaignImage,
+  refreshTemplateStatus,
   deleteCampaign,
   sendCampaign,
   resolveSegment,
 } from '../services/campaign.service.js';
 
 const router = Router();
+// 16MB como en conversation.routes.js: la foto se recomprime a ≤5MB después.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+});
+const publicBaseUrl = () => process.env.PUBLIC_BASE_URL?.replace(/\/$/, '') || null;
 
 router.get('/', async (req, res) => {
   try {
@@ -17,6 +28,10 @@ router.get('/', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+router.get('/meta-info', (req, res) => {
+  res.json({ canUseButton: !!publicBaseUrl() });
 });
 
 // Previsualización del segmento antes de crear/mandar la campaña — misma
@@ -35,11 +50,24 @@ router.post('/preview-segment', async (req, res) => {
   }
 });
 
+router.post('/with-template', upload.single('image'), async (req, res) => {
+  try {
+    let data;
+    try { data = JSON.parse(req.body.data ?? '{}'); } catch { return res.status(400).json({ error: 'Datos inválidos' }); }
+    const campaign = await createCampaignWithTemplate({
+      data, imageFile: req.file ?? null, publicBaseUrl: publicBaseUrl(), createdBy: req.agent?.email ?? null,
+    });
+    res.status(201).json({ campaign });
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
 router.post('/', async (req, res) => {
   try {
-    const { name, templateName, language, category, paramsTemplate, targetUrl, segment } = req.body;
+    const { name, templateName, language, category, paramsTemplate, targetUrl, segment, varOrder, linkMode, templateHasImage } = req.body;
     const campaign = await createCampaign({
-      name, templateName, language, category, paramsTemplate, targetUrl, segment,
+      name, templateName, language, category, paramsTemplate, targetUrl, segment, varOrder, linkMode, templateHasImage,
       createdBy: req.agent?.email ?? null,
     });
     res.status(201).json({ campaign });
@@ -59,11 +87,27 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+router.post('/:id/image', upload.single('image'), async (req, res) => {
+  try {
+    res.json({ campaign: await setCampaignImage(req.params.id, req.file ?? null) });
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
+router.get('/:id/template-status', async (req, res) => {
+  try {
+    res.json({ campaign: await refreshTemplateStatus(req.params.id) });
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
 router.post('/:id/send', async (req, res) => {
   try {
     // PUBLIC_BASE_URL: si no está seteada, la campaña igual se manda pero
     // sin link corto trackeable (ver campaign.service.js:sendCampaign).
-    const result = await sendCampaign(req.params.id, process.env.PUBLIC_BASE_URL?.replace(/\/$/, '') || null);
+    const result = await sendCampaign(req.params.id, publicBaseUrl());
     res.json(result);
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });
