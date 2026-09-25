@@ -127,6 +127,7 @@ export default function Campaigns() {
     setError('');
     try {
       let campaign;
+      let imageError = null;
       if (form.mode === 'new') {
         const fd = new FormData();
         fd.append('data', JSON.stringify({
@@ -171,12 +172,17 @@ export default function Campaigns() {
           fd.append('image', imageFile);
           const imgRes = await authFetch(BASE_URL + `/api/campaigns/${campaign.id}/image`, { method: 'POST', body: fd });
           const imgData = await imgRes.json();
-          if (!imgRes.ok) throw new Error(`La difusión se creó pero falló la imagen: ${imgData.error}`);
+          // La difusión ya quedó creada en el servidor aunque falle la imagen: no
+          // tiramos error acá (dejaría el form abierto y un reintento duplicaría
+          // la campaña). Guardamos el mensaje y lo mostramos después de abrir el
+          // detalle, donde el usuario puede reintentar con "Cambiar imagen".
+          if (!imgRes.ok) imageError = `La difusión se creó pero falló la imagen: ${imgData.error}`;
         }
       }
       setForm(null);
       await load();
-      openDetail(campaign);
+      await openDetail(campaign);
+      if (imageError) alert(imageError);
     } catch (err) {
       setError(err.message);
     } finally {
