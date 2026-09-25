@@ -99,3 +99,38 @@ export function parseTestPhones(input) {
   if (phones.length > MAX_TEST_PHONES) throw badRequest(`Máximo ${MAX_TEST_PHONES} números por prueba`);
   return phones;
 }
+
+/**
+ * La misma persona puede tener dos fichas de contacto con el teléfono en
+ * formatos distintos (p.ej. la del chat `5491155551234` y la que creó el sync
+ * de Tienda Nube `541155551234`, sin el 9). Sin unirlas, un segmento las trae
+ * a las dos y la difusión le llega DOS veces al mismo número. Se agrupan por
+ * teléfono canónico: nombre de la ficha canónica (la del chat) y pedidos de
+ * ambas, sin repetir.
+ */
+export function mergeContactsByPhone(contacts) {
+  const groups = new Map();
+  for (const c of contacts ?? []) {
+    const key = c.channel === 'instagram' ? `ig:${c.contactId}` : (toWaContactId(c.contactId) ?? c.contactId);
+    groups.set(key, [...(groups.get(key) ?? []), c]);
+  }
+  const merged = [];
+  for (const [key, list] of groups) {
+    if (list.length === 1 && (key.startsWith('ig:') || list[0].contactId === key)) { merged.push(list[0]); continue; }
+    const canonical = list.find(c => c.contactId === key) ?? list[0];
+    const orders = new Map();
+    for (const c of list) for (const o of c.tnOrders ?? []) orders.set(o.number ?? `${o.date}|${o.total}`, o);
+    const tnOrders = [...orders.values()].sort((a, b) => (b.date ?? '').localeCompare(a.date ?? ''));
+    merged.push({
+      ...list.find(c => (c.tnOrders?.length ?? 0) > 0),
+      ...canonical,
+      contactId: key.startsWith('ig:') ? canonical.contactId : key,
+      contactName: canonical.contactName ?? list.find(c => c.contactName)?.contactName ?? null,
+      tnOrders,
+      tnOrderCount: tnOrders.length,
+      tnTotalSpent: tnOrders.reduce((sum, o) => sum + (Number(o.total) || 0), 0),
+      tnLastOrderAt: tnOrders[0]?.date ?? null,
+    });
+  }
+  return merged;
+}

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateComposer, buildRecipientMessage, assertSendable, isImageExpired, legacyInterpolate, parseTestPhones } from './campaignMessage.js';
+import { validateComposer, buildRecipientMessage, assertSendable, isImageExpired, legacyInterpolate, parseTestPhones, mergeContactsByPhone } from './campaignMessage.js';
 
 const base = { templateName: 'promo_0925', bodyText: 'Hola {{primer_nombre}}, mirá la promo.', linkMode: 'button', buttonText: 'Ver promo', targetUrl: 'https://tienda.com/promo', publicBaseUrl: 'https://bot.com' };
 const is400 = (re) => (e) => e.status === 400 && (!re || re.test(e.message));
@@ -128,4 +128,36 @@ test('parseTestPhones: vacío → 400', () => {
 test('parseTestPhones: más de 10 → 400', () => {
   const many = Array.from({ length: 11 }, (_, i) => `11555500${String(i).padStart(2, '0')}`).join(',');
   assert.throws(() => parseTestPhones(many), (e) => e.status === 400 && /10/.test(e.message));
+});
+
+test('mergeContactsByPhone: la misma persona guardada con y sin el 9 sale una sola vez', () => {
+  const merged = mergeContactsByPhone([
+    { contactId: '5491155551234', channel: 'whatsapp', contactName: 'Ana (chat)', tnOrders: [] },
+    { contactId: '541155551234', channel: 'whatsapp', contactName: 'Ana López', tnOrders: [{ number: 1, date: '2026-09-01', total: 100 }], tnOrderCount: 1, tnTotalSpent: 100 },
+    { contactId: '5491144443333', channel: 'whatsapp', contactName: 'Beto', tnOrders: [] },
+  ]);
+  assert.equal(merged.length, 2);
+  const ana = merged.find(c => c.contactId === '5491155551234');
+  assert.equal(ana.contactName, 'Ana (chat)');           // prioriza la ficha canónica (la del chat)
+  assert.equal(ana.tnOrders.length, 1);                  // conserva los pedidos de la ficha de TN
+  assert.equal(ana.tnOrderCount, 1);
+  assert.equal(ana.tnTotalSpent, 100);
+});
+
+test('mergeContactsByPhone: une pedidos de ambas fichas sin repetir', () => {
+  const [c] = mergeContactsByPhone([
+    { contactId: '541155551234', contactName: null, tnOrders: [{ number: 1, date: '2026-09-01', total: 100 }, { number: 2, date: '2026-09-05', total: 50 }] },
+    { contactId: '5491155551234', contactName: 'Ana', tnOrders: [{ number: 2, date: '2026-09-05', total: 50 }] },
+  ]);
+  assert.equal(c.contactId, '5491155551234');
+  assert.equal(c.contactName, 'Ana');
+  assert.deepEqual(c.tnOrders.map(o => o.number).sort(), [1, 2]);
+  assert.equal(c.tnOrderCount, 2);
+  assert.equal(c.tnTotalSpent, 150);
+  assert.equal(c.tnLastOrderAt, '2026-09-05');
+});
+
+test('mergeContactsByPhone: contactos no-telefónicos (Instagram) pasan tal cual', () => {
+  const list = [{ contactId: 'ig_123', channel: 'instagram' }, { contactId: 'ig_123', channel: 'instagram' }];
+  assert.equal(mergeContactsByPhone(list).length, 1);
 });

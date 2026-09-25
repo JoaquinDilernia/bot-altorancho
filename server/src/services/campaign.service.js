@@ -6,7 +6,7 @@ import { getOrCreateConversation, appendMessage, updateMessageStatus } from './c
 import { sendWhatsAppTemplate, uploadMetaMedia, uploadTemplateSampleImage, ensureWhatsAppImageSize, normalizeHeaderImage } from './meta.service.js';
 import { createTemplate, syncTemplateStatus } from './template.service.js';
 import { TEMPLATE_VARS, sampleValues } from './templateVars.js';
-import { validateComposer, buildRecipientMessage, assertSendable, parseTestPhones } from './campaignMessage.js';
+import { validateComposer, buildRecipientMessage, assertSendable, parseTestPhones, mergeContactsByPhone } from './campaignMessage.js';
 import { toWaContactId } from './phone.js';
 import { addUtm, slugCampaign, attributeOrders, ATTRIBUTION_WINDOW_DAYS } from './attribution.js';
 
@@ -141,7 +141,8 @@ function segmentToFilters(segment = {}) {
     previsualización como para el envío real, así el conteo que ve el agente
     antes de mandar es exactamente la lista que va a recibir el mensaje. */
 export async function resolveSegment(segment = {}) {
-  return listCustomers(segmentToFilters(segment));
+  // Unido por teléfono canónico: si no, una persona con dos fichas recibe la difusión dos veces.
+  return mergeContactsByPhone(await listCustomers(segmentToFilters(segment)));
 }
 
 const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
@@ -417,7 +418,7 @@ export async function sendCampaignTest(campaignId, phonesInput, { publicBaseUrl,
   await db.collection('bot-altorancho_config').doc('bot_config').set({ campaignTestPhones: phones }, { merge: true });
 
   const trackedUrl = addUtm(campaign.targetUrl, { campaignSlug: slugCampaign(campaign.name), content: 'prueba' });
-  const customers = await listCustomers({});
+  const customers = mergeContactsByPhone(await listCustomers({}));
   const results = [];
   for (const phone of phones) {
     const contact = customers.find(c => toWaContactId(c.contactId) === phone) ?? { contactId: phone, contactName: null };
@@ -475,9 +476,9 @@ export async function computeCampaignAttribution(campaignId, { refreshClicked = 
     invalidateCustomersCache();
   }
 
-  const customers = await listCustomers({});
+  const customers = mergeContactsByPhone(await listCustomers({}));
   const customersById = new Map();
-  for (const c of customers) customersById.set(toWaContactId(c.contactId) ?? c.contactId, c);
+  for (const c of customers) customersById.set(c.contactId, c);
 
   const { buyers, summary } = attributeOrders({ sends, customersById, windowDays: ATTRIBUTION_WINDOW_DAYS });
   const attribution = {

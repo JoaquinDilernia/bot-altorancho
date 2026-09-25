@@ -1,6 +1,7 @@
 import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
 import { findCustomerByPhone, getCustomerOrders, fetchAllCustomersWithOrders } from './tiendanube.service.js';
+import { toWaContactId } from './phone.js';
 
 const COLLECTION = 'bot-altorancho_customers';
 const TN_CACHE_HOURS = 24;
@@ -645,7 +646,10 @@ export async function syncAllTiendaNubeCustomers() {
   for (const { tnCustomer, orders } of groups) {
     const rawPhone = tnCustomer.phone;
     if (!rawPhone || String(rawPhone).replace(/\D/g, '').length < 6) { skippedNoPhone++; continue; }
-    const contactId = normalizePhone(rawPhone);
+    // Mismo ID canónico que el chat de WhatsApp (phone.js). Con normalizePhone,
+    // "+54 11 …" quedaba "5411…" sin el 9 y se creaba una segunda ficha para la
+    // misma persona → las difusiones le llegaban dos veces.
+    const contactId = toWaContactId(rawPhone);
     if (!contactId) { skippedNoPhone++; continue; }
 
     const sorted = [...orders].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
