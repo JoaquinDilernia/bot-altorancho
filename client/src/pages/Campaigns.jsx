@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Campaigns.module.css';
-import TemplateComposer, { EMPTY_COMPOSER } from '../components/Campaigns/TemplateComposer';
+import TemplateComposer, { EMPTY_COMPOSER, IMAGE_SIZE_HINT } from '../components/Campaigns/TemplateComposer';
 import WhatsAppPreview from '../components/Campaigns/WhatsAppPreview';
 import CostEstimate from '../components/Campaigns/CostEstimate';
 import { renderPreview } from '../utils/templateVars';
@@ -327,6 +327,7 @@ export default function Campaigns() {
                       <div className={styles.field}>
                         <label className={styles.label}>Imagen de esta difusión</label>
                         <input type="file" accept="image/jpeg,image/png" onChange={e => setImageFile(e.target.files?.[0] ?? null)} required />
+                        <p className={styles.hint}>{IMAGE_SIZE_HINT}</p>
                       </div>
                     )}
 

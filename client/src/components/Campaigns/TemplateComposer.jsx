@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef } from 'react';
 import { TEMPLATE_VARS, slugTemplateName } from '../../utils/templateVars';
 import styles from './Composer.module.css';
 
+// Meta no publica medidas en px para el header; 1.91:1 es la proporción que
+// WhatsApp muestra sin recortar arriba y abajo.
+export const IMAGE_SIZE_HINT = 'Tamaño recomendado: 1125 × 600 px (horizontal, proporción 1.91:1). JPG o PNG, hasta 5 MB. Dejá lo importante centrado: en algunos celulares se recorta un poco de los bordes.';
+
 export const EMPTY_COMPOSER = {
   templateName: '', templateNameTouched: false, category: 'MARKETING',
   bodyText: '', imageFile: null, linkMode: 'button', buttonText: 'Ver promo',
@@ -65,6 +69,7 @@ export default function TemplateComposer({ value, onChange, canUseButton, campai
       <div>
         <label className={styles.label}>Imagen (opcional)</label>
         <input type="file" accept="image/jpeg,image/png" onChange={e => set({ imageFile: e.target.files?.[0] ?? null })} />
+        <p className={styles.hint}>{IMAGE_SIZE_HINT}</p>
       </div>
 
       <div>
