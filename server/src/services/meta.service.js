@@ -180,9 +180,13 @@ export async function downloadMediaAsBase64(mediaId) {
 // Arma el objeto `template` del payload de Meta. `urlButtonParam`: si se pasa,
 // agrega el parámetro dinámico del botón de URL en la posición 0 (la plantilla
 // tiene que tener un botón URL con {{1}} aprobado en Meta).
-export function buildTemplateObject(templateName, language, params = [], urlButtonParam = null) {
+// `headerImageId`: si se pasa, agrega el header de imagen antes que body/botón.
+export function buildTemplateObject(templateName, language, params = [], urlButtonParam = null, headerImageId = null) {
   const template = { name: templateName, language: { code: language } };
   const components = [];
+  if (headerImageId) {
+    components.push({ type: 'header', parameters: [{ type: 'image', image: { id: headerImageId } }] });
+  }
   if (params.length > 0) {
     components.push({ type: 'body', parameters: params.map(p => ({ type: 'text', text: String(p) })) });
   }
@@ -198,12 +202,12 @@ export function buildTemplateObject(templateName, language, params = [], urlButt
   return template;
 }
 
-export async function sendWhatsAppTemplate(to, templateName, language = 'es_AR', params = [], urlButtonParam = null) {
+export async function sendWhatsAppTemplate(to, templateName, language = 'es_AR', params = [], urlButtonParam = null, headerImageId = null) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) {
     console.log('[meta] sendWhatsAppTemplate skipped — tokens not configured');
     return null;
   }
-  const template = buildTemplateObject(templateName, language, params, urlButtonParam);
+  const template = buildTemplateObject(templateName, language, params, urlButtonParam, headerImageId);
   const { data } = await axios.post(
     `${META_API_URL}/${process.env.META_PHONE_NUMBER_ID}/messages`,
     { messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'template', template },
@@ -312,23 +316,81 @@ export async function downloadMetaMedia(mediaId) {
   return { buffer: Buffer.from(response.data), mimeType: info.mime_type || 'application/octet-stream' };
 }
 
-export async function createMetaTemplate({ name, language, category, bodyText, params = [] }) {
+/** Arma el body de POST /{waba}/message_templates. Pura para poder testearla. */
+export function buildTemplateCreatePayload({ name, language, category, bodyText, params = [], bodyExamples = null, header = null, button = null }) {
+  const components = [];
+  if (header?.format === 'IMAGE') {
+    components.push({ type: 'HEADER', format: 'IMAGE', example: { header_handle: [header.handle] } });
+  }
+  const bodyComponent = { type: 'BODY', text: bodyText };
+  // Meta exige un valor de ejemplo por cada variable del body
+  const examples = bodyExamples ?? params.map((_, i) => `ejemplo${i + 1}`);
+  if (examples.length > 0) bodyComponent.example = { body_text: [examples] };
+  components.push(bodyComponent);
+  if (button) {
+    components.push({
+      type: 'BUTTONS',
+      buttons: [{
+        type: 'URL',
+        text: button.text,
+        url: `${button.urlBase}/r/{{1}}`,
+        example: [`${button.urlBase}/r/ejemplo1`],
+      }],
+    });
+  }
+  return { name, language, category, components };
+}
+
+export async function createMetaTemplate(opts) {
   const wabaId = process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID;
   const token  = process.env.META_ACCESS_TOKEN;
   if (!wabaId || !token) {
     throw new Error('META_WHATSAPP_BUSINESS_ACCOUNT_ID o META_ACCESS_TOKEN no configurados');
   }
-  const bodyComponent = { type: 'BODY', text: bodyText };
-  if (params.length > 0) {
-    // Meta requires example values for every variable in the template
-    bodyComponent.example = { body_text: [params.map((_, i) => `ejemplo${i + 1}`)] };
-  }
   const { data } = await axios.post(
     `${META_API_URL}/${wabaId}/message_templates`,
-    { name, language, category, components: [bodyComponent] },
+    buildTemplateCreatePayload(opts),
     { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
   );
   return data; // { id, status, ... }
+}
+
+let cachedAppId = null;
+
+/** La Resumable Upload API cuelga del App ID, no del WABA. Se saca del
+    propio token (debug_token) para no pedir otra variable en Railway;
+    META_APP_ID la pisa si alguna vez el token no alcanza. */
+export async function getMetaAppId() {
+  if (process.env.META_APP_ID) return process.env.META_APP_ID;
+  if (cachedAppId) return cachedAppId;
+  const token = process.env.META_ACCESS_TOKEN;
+  try {
+    const { data } = await axios.get(`${META_API_URL}/debug_token`, {
+      params: { input_token: token, access_token: token },
+    });
+    cachedAppId = data?.data?.app_id ?? null;
+  } catch (err) {
+    console.error('[meta] getMetaAppId error:', err.response?.data ?? err.message);
+  }
+  if (!cachedAppId) throw new Error('No se pudo obtener el App ID de Meta; cargá META_APP_ID en Railway');
+  return cachedAppId;
+}
+
+/** Sube la imagen de ejemplo que Meta exige para aprobar un header IMAGE y
+    devuelve el handle. No sirve para enviar — para eso está uploadMetaMedia. */
+export async function uploadTemplateSampleImage(buffer, mimeType) {
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!token) throw new Error('META_ACCESS_TOKEN no configurado');
+  const appId = await getMetaAppId();
+  const { data: session } = await axios.post(`${META_API_URL}/${appId}/uploads`, null, {
+    params: { file_name: 'header', file_length: buffer.length, file_type: mimeType, access_token: token },
+  });
+  const { data } = await axios.post(`${META_API_URL}/${session.id}`, buffer, {
+    headers: { Authorization: `OAuth ${token}`, file_offset: '0', 'Content-Type': mimeType },
+    maxBodyLength: Infinity,
+  });
+  if (!data?.h) throw new Error('Meta no devolvió el handle de la imagen');
+  return data.h;
 }
 
 export async function fetchMetaTemplateStatuses() {
@@ -338,7 +400,7 @@ export async function fetchMetaTemplateStatuses() {
       `${META_API_URL}/${process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
       {
         headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
-        params: { fields: 'name,status,language', limit: 100 },
+        params: { fields: 'name,status,language,category,components,rejected_reason', limit: 100 },
       }
     );
     return data.data ?? [];
