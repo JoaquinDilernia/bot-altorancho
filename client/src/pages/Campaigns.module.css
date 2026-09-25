@@ -278,3 +278,12 @@
 }
 .advInput:focus { border-color: var(--color-primary-light); }
 .advInputWide { width: 180px; }
+
+/* ---- Composer: elegir plantilla vs crear nueva ---- */
+.modeSwitch { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.composeGrid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--space-4); align-items: start; }
+.composeMain { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
+@media (max-width: 900px) { .composeGrid { grid-template-columns: 1fr; } }
+.statusRejected { background: var(--color-surface-alt); color: var(--color-error); border: 1px solid var(--color-error); }
+.imageRow { display: flex; align-items: center; gap: var(--space-3); }
+.imageThumb { width: 96px; height: 96px; object-fit: cover; border-radius: var(--radius-md); border: 1px solid var(--color-border); }

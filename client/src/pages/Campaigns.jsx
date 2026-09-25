@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { authFetch, BASE_URL } from '../lib/api';
 import styles from './Campaigns.module.css';
+import TemplateComposer, { EMPTY_COMPOSER } from '../components/Campaigns/TemplateComposer';
+import WhatsAppPreview from '../components/Campaigns/WhatsAppPreview';
+import CostEstimate from '../components/Campaigns/CostEstimate';
+import { renderPreview } from '../utils/templateVars';
 
-const STATUS_LABEL = { draft: 'Borrador', sending: 'Enviando…', sent: 'Enviada' };
-const STATUS_CLASS = { draft: 'statusDraft', sending: 'statusSending', sent: 'statusSent' };
+const STATUS_LABEL = { pending_template: 'Esperando aprobación', template_rejected: 'Plantilla rechazada', draft: 'Borrador', sending: 'Enviando…', sent: 'Enviada' };
+const STATUS_CLASS = { pending_template: 'statusSending', template_rejected: 'statusRejected', draft: 'statusDraft', sending: 'statusSending', sent: 'statusSent' };
 const EMPTY_SEGMENT = { q: '', channel: '', tags: [], hasOrders: false, spentMin: '', spentMonths: '12', product: '', productMonths: '12', orderCountMin: '', lastOrderMaxDays: '', lastOrderMinDays: '' };
-const DEFAULT_FORM = { name: '', templateId: '', targetUrl: '', segment: { ...EMPTY_SEGMENT } };
+const DEFAULT_FORM = { name: '', mode: 'existing', templateId: '', targetUrl: '', segment: { ...EMPTY_SEGMENT } };
+const DELETABLE = new Set(['draft', 'pending_template', 'template_rejected']);
 
 function formatDate(ts) {
   if (!ts) return '—';
@@ -29,20 +34,29 @@ export default function Campaigns() {
   const [detail, setDetail] = useState(null); // { campaign, sends }
   const [sending, setSending] = useState(false);
   const pollRef = useRef(null);
+  const [composer, setComposer] = useState(EMPTY_COMPOSER);
+  const [imageFile, setImageFile] = useState(null); // para plantillas aprobadas con header IMAGE
+  const [pricing, setPricing] = useState(null);
+  const [canUseButton, setCanUseButton] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [campRes, tplRes, tagsRes] = await Promise.all([
+      const [campRes, tplRes, tagsRes, cfgRes, infoRes] = await Promise.all([
         authFetch(BASE_URL + '/api/campaigns'),
         authFetch(BASE_URL + '/api/templates'),
         authFetch(BASE_URL + '/api/customers/tags'),
+        authFetch(BASE_URL + '/api/config'),
+        authFetch(BASE_URL + '/api/campaigns/meta-info'),
       ]);
       if (campRes.ok) setCampaigns((await campRes.json()).campaigns ?? []);
       // /api/templates devuelve un array plano (mismo endpoint que usa
       // Conversations.jsx) — sólo sirven las que Meta ya aprobó.
       if (tplRes.ok) setTemplates((await tplRes.json()).filter(t => t.metaStatus === 'APPROVED'));
       if (tagsRes.ok) setAllTags((await tagsRes.json()).tags ?? []);
+      if (cfgRes.ok) setPricing((await cfgRes.json()).config?.pricing ?? null);
+      if (infoRes.ok) setCanUseButton(!!(await infoRes.json()).canUseButton);
     } finally {
       setLoading(false);
     }
@@ -65,6 +79,8 @@ export default function Campaigns() {
     setParams([]);
     setPreview(null);
     setError('');
+    setComposer(EMPTY_COMPOSER);
+    setImageFile(null);
     refreshPreview({ ...EMPTY_SEGMENT });
   }
 
@@ -97,29 +113,70 @@ export default function Campaigns() {
 
   const selectedTemplate = templates.find(t => t.id === form?.templateId);
 
+  const activeImage = form?.mode === 'new' ? composer.imageFile : imageFile;
+  useEffect(() => {
+    if (!activeImage) { setImagePreviewUrl(null); return; }
+    const url = URL.createObjectURL(activeImage);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [activeImage]);
+
   async function handleCreate(e) {
     e.preventDefault();
-    if (!selectedTemplate) { setError('Elegí una plantilla aprobada'); return; }
     setSaving(true);
     setError('');
     try {
-      const res = await authFetch(BASE_URL + '/api/campaigns', {
-        method: 'POST',
-        body: {
+      let campaign;
+      if (form.mode === 'new') {
+        const fd = new FormData();
+        fd.append('data', JSON.stringify({
           name: form.name,
-          templateName: selectedTemplate.name,
-          language: selectedTemplate.language,
-          category: selectedTemplate.category,
-          paramsTemplate: params,
+          templateName: composer.templateName,
+          category: composer.category,
+          bodyText: composer.bodyText,
+          linkMode: composer.linkMode,
+          buttonText: composer.buttonText,
           targetUrl: form.targetUrl,
           segment: form.segment,
-        },
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+        }));
+        if (composer.imageFile) fd.append('image', composer.imageFile);
+        const res = await authFetch(BASE_URL + '/api/campaigns/with-template', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        campaign = data.campaign;
+      } else {
+        if (!selectedTemplate) throw new Error('Elegí una plantilla aprobada');
+        const needsImage = selectedTemplate.headerFormat === 'IMAGE';
+        if (needsImage && !imageFile) throw new Error('Esta plantilla lleva imagen: subila');
+        const res = await authFetch(BASE_URL + '/api/campaigns', {
+          method: 'POST',
+          body: {
+            name: form.name,
+            templateName: selectedTemplate.name,
+            language: selectedTemplate.language,
+            category: selectedTemplate.category,
+            paramsTemplate: selectedTemplate.varOrder ? [] : params,
+            varOrder: selectedTemplate.varOrder ?? null,
+            linkMode: selectedTemplate.linkMode ?? null,
+            templateHasImage: needsImage,
+            targetUrl: form.targetUrl,
+            segment: form.segment,
+          },
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        campaign = data.campaign;
+        if (needsImage) {
+          const fd = new FormData();
+          fd.append('image', imageFile);
+          const imgRes = await authFetch(BASE_URL + `/api/campaigns/${campaign.id}/image`, { method: 'POST', body: fd });
+          const imgData = await imgRes.json();
+          if (!imgRes.ok) throw new Error(`La difusión se creó pero falló la imagen: ${imgData.error}`);
+        }
+      }
       setForm(null);
       await load();
-      openDetail(data.campaign);
+      openDetail(campaign);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -146,6 +203,34 @@ export default function Campaigns() {
     }
     return () => clearInterval(pollRef.current);
   }, [detail?.campaign?.status, detail?.campaign?.id]);
+
+  const tplPollRef = useRef(null);
+  useEffect(() => {
+    clearInterval(tplPollRef.current);
+    if (detail?.campaign?.status === 'pending_template') {
+      tplPollRef.current = setInterval(async () => {
+        const res = await authFetch(BASE_URL + `/api/campaigns/${detail.campaign.id}/template-status`);
+        if (res.ok) {
+          const { campaign } = await res.json();
+          if (campaign.status !== 'pending_template') {
+            setDetail(prev => ({ ...prev, campaign }));
+            setCampaigns(prev => prev.map(c => c.id === campaign.id ? campaign : c));
+          }
+        }
+      }, 10000);
+    }
+    return () => clearInterval(tplPollRef.current);
+  }, [detail?.campaign?.status, detail?.campaign?.id]);
+
+  async function handleChangeImage(file) {
+    if (!file || !detail) return;
+    const fd = new FormData();
+    fd.append('image', file);
+    const res = await authFetch(BASE_URL + `/api/campaigns/${detail.campaign.id}/image`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { alert(`No se pudo subir la imagen: ${data.error}`); return; }
+    setDetail(prev => ({ ...prev, campaign: data.campaign }));
+  }
 
   async function handleSend() {
     if (!detail) return;
@@ -197,45 +282,80 @@ export default function Campaigns() {
             </div>
 
             <div className={styles.field}>
-              <label className={styles.label}>Plantilla aprobada</label>
-              {templates.length === 0 ? (
-                <p className={styles.hint}>No hay plantillas aprobadas todavía. Creá una en la sección Plantillas.</p>
-              ) : (
-                <select className={styles.input} value={form.templateId} onChange={e => pickTemplate(e.target.value)} required>
-                  <option value="">Seleccioná una plantilla…</option>
-                  {templates.map(t => <option key={t.id} value={t.id}>{t.displayName} ({t.name})</option>)}
-                </select>
-              )}
-              {selectedTemplate && <p className={styles.templatePreview}>{selectedTemplate.bodyText}</p>}
+              <label className={styles.label}>Mensaje</label>
+              <div className={styles.modeSwitch}>
+                <button type="button" className={`${styles.tagChip} ${form.mode === 'existing' ? styles.tagChipActive : ''}`} onClick={() => setField('mode', 'existing')}>Usar plantilla aprobada</button>
+                <button type="button" className={`${styles.tagChip} ${form.mode === 'new' ? styles.tagChipActive : ''}`} onClick={() => setField('mode', 'new')}>Crear plantilla nueva</button>
+              </div>
             </div>
 
-            {selectedTemplate?.params?.length > 0 && (
-              <div className={styles.field}>
-                <label className={styles.label}>Parámetros de la plantilla</label>
-                <p className={styles.hint}>
-                  Podés usar <code>{'{{nombre}}'}</code> para el nombre del contacto,{' '}
-                  <code>{'{{pedidos}}'}</code> para su cantidad de compras en Tienda Nube,{' '}
-                  <code>{'{{gastado}}'}</code> para el total gastado
-                  {form.targetUrl && <> y <code>{'{{link}}'}</code> para el link trackeado</>}.
-                </p>
-                {selectedTemplate.params.map((desc, i) => (
-                  <div key={i} className={styles.paramRow}>
-                    <span className={styles.paramLabel}>{`{{${i + 1}}}`} {desc}</span>
-                    <input
-                      className={styles.input}
-                      value={params[i] ?? ''}
-                      onChange={e => setParams(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
-                      placeholder={desc}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className={styles.composeGrid}>
+              <div className={styles.composeMain}>
+                {form.mode === 'new' ? (
+                  <TemplateComposer value={composer} onChange={setComposer} canUseButton={canUseButton} campaignName={form.name} />
+                ) : (
+                  <>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Plantilla aprobada</label>
+                      {templates.length === 0 ? (
+                        <p className={styles.hint}>No hay plantillas aprobadas todavía. Creá una en la sección Plantillas.</p>
+                      ) : (
+                        <select className={styles.input} value={form.templateId} onChange={e => pickTemplate(e.target.value)} required={form.mode === 'existing'}>
+                          <option value="">Seleccioná una plantilla…</option>
+                          {templates.map(t => <option key={t.id} value={t.id}>{t.displayName} ({t.name})</option>)}
+                        </select>
+                      )}
+                      {selectedTemplate && <p className={styles.templatePreview}>{selectedTemplate.bodyText}</p>}
+                    </div>
 
-            <div className={styles.field}>
-              <label className={styles.label}>Link a trackear (opcional)</label>
-              <input className={styles.input} type="url" value={form.targetUrl} onChange={e => setField('targetUrl', e.target.value)} placeholder="https://..." />
-              <p className={styles.hint}>Si lo cargás, usalo como <code>{'{{link}}'}</code> en algún parámetro — cada contacto recibe un link corto propio para poder contar los clicks.</p>
+                    {selectedTemplate?.headerFormat === 'IMAGE' && (
+                      <div className={styles.field}>
+                        <label className={styles.label}>Imagen de esta difusión</label>
+                        <input type="file" accept="image/*" onChange={e => setImageFile(e.target.files?.[0] ?? null)} required />
+                      </div>
+                    )}
+
+                    {selectedTemplate?.params?.length > 0 && !selectedTemplate.varOrder && (
+                      <div className={styles.field}>
+                        <label className={styles.label}>Parámetros de la plantilla</label>
+                        <p className={styles.hint}>
+                          Podés usar <code>{'{{nombre}}'}</code> para el nombre del contacto,{' '}
+                          <code>{'{{pedidos}}'}</code> para su cantidad de compras en Tienda Nube,{' '}
+                          <code>{'{{gastado}}'}</code> para el total gastado
+                          {form.targetUrl && <> y <code>{'{{link}}'}</code> para el link trackeado</>}.
+                        </p>
+                        {selectedTemplate.params.map((desc, i) => (
+                          <div key={i} className={styles.paramRow}>
+                            <span className={styles.paramLabel}>{`{{${i + 1}}}`} {desc}</span>
+                            <input
+                              className={styles.input}
+                              value={params[i] ?? ''}
+                              onChange={e => setParams(prev => { const n = [...prev]; n[i] = e.target.value; return n; })}
+                              placeholder={desc}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {(form.mode === 'new' ? composer.linkMode !== 'none' : true) && (
+                  <div className={styles.field}>
+                    <label className={styles.label}>{form.mode === 'new' ? 'URL destino del link' : 'Link a trackear (opcional)'}</label>
+                    <input className={styles.input} type="url" value={form.targetUrl} onChange={e => setField('targetUrl', e.target.value)} placeholder="https://..." required={form.mode === 'new'} />
+                    <p className={styles.hint}>Cada contacto recibe un link corto propio para poder contar los clicks.</p>
+                  </div>
+                )}
+              </div>
+
+              <WhatsAppPreview
+                imageUrl={imagePreviewUrl}
+                text={renderPreview(form.mode === 'new' ? composer.bodyText : selectedTemplate?.bodyText ?? '', preview?.sample?.[0]?.contactName)}
+                buttonText={form.mode === 'new'
+                  ? (composer.linkMode === 'button' ? composer.buttonText : null)
+                  : (selectedTemplate?.button?.text ?? (selectedTemplate?.hasUrlButton ? 'Link' : null))}
+              />
             </div>
 
             <div className={styles.field}>
@@ -305,13 +425,18 @@ export default function Campaigns() {
                   <>📤 <strong>{preview.whatsappCount}</strong> contactos de WhatsApp van a recibir este mensaje{preview.total !== preview.whatsappCount ? ` (de ${preview.total} en el segmento)` : ''}.</>
                 ) : ''}
               </p>
+              <CostEstimate
+                count={preview?.whatsappCount ?? 0}
+                category={form.mode === 'new' ? composer.category : selectedTemplate?.category}
+                pricing={pricing}
+              />
             </div>
 
             {error && <p className={styles.error}>{error}</p>}
             <div className={styles.formActions}>
               <button type="button" className={styles.btnSecondary} onClick={cancel}>Cancelar</button>
               <button type="submit" className={styles.btnPrimary} disabled={saving}>
-                {saving ? 'Guardando…' : 'Guardar borrador'}
+                {saving ? 'Guardando…' : form.mode === 'new' ? 'Guardar y mandar a aprobar' : 'Guardar borrador'}
               </button>
             </div>
           </form>
@@ -337,6 +462,28 @@ export default function Campaigns() {
               <Stat label="Leídos" value={detail.campaign.stats.read} tone="info" />
               <Stat label="Clicks" value={detail.campaign.stats.clicked} tone="success" />
             </div>
+
+            {detail.campaign.status === 'pending_template' && (
+              <p className={styles.hint}>⏳ Esperando que Meta apruebe la plantilla. Esto se actualiza solo; cuando se apruebe se habilita Enviar.</p>
+            )}
+            {detail.campaign.status === 'template_rejected' && (
+              <p className={styles.error}>Meta rechazó la plantilla{detail.campaign.templateRejectedReason ? `: ${detail.campaign.templateRejectedReason}` : ''}. Borrá esta difusión y creala de nuevo corrigiendo el texto.</p>
+            )}
+            {detail.campaign.templateHasImage && ['draft', 'pending_template'].includes(detail.campaign.status) && (
+              <div className={styles.imageRow}>
+                {detail.campaign.headerImage?.mediaId && (
+                  <img
+                    className={styles.imageThumb}
+                    alt=""
+                    src={`${BASE_URL}/api/conversations/media/${detail.campaign.headerImage.mediaId}?token=${encodeURIComponent(localStorage.getItem('altorancho_token') ?? '')}`}
+                  />
+                )}
+                <label className={styles.btnSecondary}>
+                  Cambiar imagen
+                  <input type="file" accept="image/*" hidden onChange={e => handleChangeImage(e.target.files?.[0])} />
+                </label>
+              </div>
+            )}
 
             {detail.campaign.status === 'draft' && (
               <button className={styles.btnPrimary} onClick={handleSend} disabled={sending}>
@@ -374,7 +521,7 @@ export default function Campaigns() {
                   </span>
                   <span className={styles.muted}>{formatDate(c.sentAt ?? c.createdAt)}</span>
                   <div className={styles.rowActions}>
-                    {c.status === 'draft' && (
+                    {DELETABLE.has(c.status) && (
                       <button className={`${styles.actionBtn} ${styles.actionBtnDanger}`} onClick={() => handleDelete(c)}>Eliminar</button>
                     )}
                   </div>
