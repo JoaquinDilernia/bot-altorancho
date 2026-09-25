@@ -11,6 +11,7 @@ import {
   deleteCampaign,
   sendCampaign,
   sendCampaignTest,
+  computeCampaignAttribution,
   resolveSegment,
 } from '../services/campaign.service.js';
 
@@ -110,6 +111,14 @@ router.post('/:id/send', async (req, res) => {
     // sin link corto trackeable (ver campaign.service.js:sendCampaign).
     const result = await sendCampaign(req.params.id, publicBaseUrl());
     res.json(result);
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
+router.post('/:id/attribution', async (req, res) => {
+  try {
+    res.json({ campaign: await computeCampaignAttribution(req.params.id, { refreshClicked: true }) });
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });
   }

@@ -1,13 +1,14 @@
 import crypto from 'crypto';
 import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
-import { listCustomers } from './customer.service.js';
+import { listCustomers, enrichCustomerFromTiendaNube, invalidateCustomersCache } from './customer.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus } from './conversation.service.js';
 import { sendWhatsAppTemplate, uploadMetaMedia, uploadTemplateSampleImage, ensureWhatsAppImageSize, normalizeHeaderImage } from './meta.service.js';
 import { createTemplate, syncTemplateStatus } from './template.service.js';
 import { TEMPLATE_VARS, sampleValues } from './templateVars.js';
 import { validateComposer, buildRecipientMessage, assertSendable, parseTestPhones } from './campaignMessage.js';
 import { toWaContactId } from './phone.js';
+import { addUtm, slugCampaign, attributeOrders, ATTRIBUTION_WINDOW_DAYS } from './attribution.js';
 
 const CAMPAIGNS = 'bot-altorancho_campaigns';
 const SENDS = 'bot-altorancho_campaign_sends';
@@ -324,6 +325,7 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
   }
   assertSendable(campaign, { publicBaseUrl });
 
+  const trackedUrl = addUtm(campaign.targetUrl, { campaignSlug: slugCampaign(campaign.name) });
   const recipients = (await resolveSegment(campaign.segment)).filter(c => c.channel === 'whatsapp');
 
   await db.collection(CAMPAIGNS).doc(campaignId).update({
@@ -343,10 +345,10 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
       const sendId = sendDocId(campaignId, contact.contactId);
       try {
         let shortCode = null;
-        let link = campaign.targetUrl;
+        let link = trackedUrl;
         // linkMode null = campaña legacy: se comporta como antes (link si hay targetUrl)
         if (campaign.targetUrl && publicBaseUrl && campaign.linkMode !== 'none') {
-          shortCode = await createShortLink({ targetUrl: campaign.targetUrl, campaignId, contactId: contact.contactId });
+          shortCode = await createShortLink({ targetUrl: trackedUrl, campaignId, contactId: contact.contactId });
           link = `${publicBaseUrl}/r/${shortCode}`;
         }
         const { params, urlButtonParam, headerImageId } = buildRecipientMessage({ campaign, contact, link, shortCode });
@@ -414,14 +416,15 @@ export async function sendCampaignTest(campaignId, phonesInput, { publicBaseUrl,
   const db = getDb();
   await db.collection('bot-altorancho_config').doc('bot_config').set({ campaignTestPhones: phones }, { merge: true });
 
+  const trackedUrl = addUtm(campaign.targetUrl, { campaignSlug: slugCampaign(campaign.name), content: 'prueba' });
   const customers = await listCustomers({});
   const results = [];
   for (const phone of phones) {
     const contact = customers.find(c => toWaContactId(c.contactId) === phone) ?? { contactId: phone, contactName: null };
     let shortCode = null;
-    let link = campaign.targetUrl;
+    let link = trackedUrl;
     if (campaign.targetUrl && publicBaseUrl && campaign.linkMode !== 'none') {
-      shortCode = await createShortLink({ targetUrl: campaign.targetUrl, campaignId: null, contactId: phone });
+      shortCode = await createShortLink({ targetUrl: trackedUrl, campaignId: null, contactId: phone });
       link = `${publicBaseUrl}/r/${shortCode}`;
     }
     const { params, urlButtonParam, headerImageId } = buildRecipientMessage({ campaign, contact, link, shortCode });
@@ -444,4 +447,56 @@ export async function sendCampaignTest(campaignId, phonesInput, { publicBaseUrl,
     await new Promise(r => setTimeout(r, SEND_THROTTLE_MS));
   }
   return { results };
+}
+
+// ─────────────────────────── Ventas atribuidas ─────────────────────────────
+
+const MAX_STORED_BUYERS = 300;
+
+/**
+ * Cruza los destinatarios con sus pedidos de Tienda Nube (ver attribution.js)
+ * y guarda el resultado en la campaña. Los pedidos se actualizan de noche;
+ * con `refreshClicked` se re-consultan en TN los que tocaron el link (pocos,
+ * y los que más probablemente compraron) para no esperar al sync nocturno.
+ */
+export async function computeCampaignAttribution(campaignId, { refreshClicked = false } = {}) {
+  const campaign = await getCampaign(campaignId);
+  if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
+  if (!['sending', 'sent'].includes(campaign.status)) {
+    const e = new Error('Las ventas se calculan cuando la difusión ya se envió'); e.status = 409; throw e;
+  }
+  const sends = await getCampaignSends(campaignId);
+
+  if (refreshClicked) {
+    for (const s of sends.filter(x => x.clickedAt)) {
+      await enrichCustomerFromTiendaNube(s.contactId, true)
+        .catch(err => console.error(`[attribution] No se pudo refrescar ${s.contactId}:`, err.message));
+    }
+    invalidateCustomersCache();
+  }
+
+  const customers = await listCustomers({});
+  const customersById = new Map();
+  for (const c of customers) customersById.set(toWaContactId(c.contactId) ?? c.contactId, c);
+
+  const { buyers, summary } = attributeOrders({ sends, customersById, windowDays: ATTRIBUTION_WINDOW_DAYS });
+  const attribution = {
+    ...summary,
+    windowDays: ATTRIBUTION_WINDOW_DAYS,
+    computedAt: new Date(),
+    buyersList: buyers.slice(0, MAX_STORED_BUYERS),
+  };
+  await getDb().collection(CAMPAIGNS).doc(campaignId).update({ attribution });
+  return { ...campaign, attribution };
+}
+
+/** Cron nocturno: recalcula las difusiones enviadas dentro de la ventana (+1 día de margen). */
+export async function refreshRecentAttributions() {
+  const since = new Date(Date.now() - (ATTRIBUTION_WINDOW_DAYS + 1) * 24 * 60 * 60 * 1000);
+  const snap = await getDb().collection(CAMPAIGNS).where('sentAt', '>=', since).get();
+  for (const doc of snap.docs) {
+    if (!['sending', 'sent'].includes(doc.data().status)) continue;
+    await computeCampaignAttribution(doc.id)
+      .catch(err => console.error(`[attribution] Error en la campaña ${doc.id}:`, err.message));
+  }
 }

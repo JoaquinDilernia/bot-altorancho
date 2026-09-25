@@ -22,3 +22,9 @@
 
 .cost { font-size: var(--font-size-sm); color: var(--color-text); margin: 0; }
 .costNote { font-size: var(--font-size-xs); color: var(--color-text-muted); margin: 0; }
+
+.attribution { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.attributionHead { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
+.buyersTable { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.buyersTable th, .buyersTable td { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); }
+.buyersTable th { color: var(--color-text-muted); font-weight: 600; }

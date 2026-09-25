@@ -4,6 +4,8 @@ import styles from './Campaigns.module.css';
 import TemplateComposer, { EMPTY_COMPOSER, IMAGE_SIZE_HINT } from '../components/Campaigns/TemplateComposer';
 import WhatsAppPreview from '../components/Campaigns/WhatsAppPreview';
 import CostEstimate from '../components/Campaigns/CostEstimate';
+import AttributionPanel from '../components/Campaigns/AttributionPanel';
+import { formatArs } from '../utils/costEstimate';
 import { renderPreview } from '../utils/templateVars';
 
 const STATUS_LABEL = { pending_template: 'Esperando aprobación', template_rejected: 'Plantilla rechazada', draft: 'Borrador', sending: 'Enviando…', sent: 'Enviada' };
@@ -561,6 +563,15 @@ export default function Campaigns() {
             {detail.campaign.status === 'sending' && (
               <p className={styles.hint}>Enviando… esto se actualiza solo cada pocos segundos.</p>
             )}
+            {['sending', 'sent'].includes(detail.campaign.status) && (
+              <AttributionPanel
+                campaign={detail.campaign}
+                onUpdated={campaign => {
+                  setDetail(prev => ({ ...prev, campaign }));
+                  setCampaigns(prev => prev.map(c => c.id === campaign.id ? campaign : c));
+                }}
+              />
+            )}
           </div>
         )}
 
@@ -586,6 +597,7 @@ export default function Campaigns() {
                   <span className={`${styles.statusBadge} ${styles[STATUS_CLASS[c.status]] ?? ''}`}>{STATUS_LABEL[c.status] ?? c.status}</span>
                   <span className={styles.muted}>
                     {c.stats.sent}/{c.stats.total} · {c.stats.read} leídos · {c.stats.clicked} clicks
+                    {c.attribution && <> · 🛒 {c.attribution.buyers} ventas ({formatArs(c.attribution.revenue)})</>}
                   </span>
                   <span className={styles.muted}>{formatDate(c.sentAt ?? c.createdAt)}</span>
                   <div className={styles.rowActions}>

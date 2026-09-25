@@ -28,6 +28,7 @@ import { seedDepartmentsIfNeeded } from './services/department.service.js';
 import { requireAuth, requireAtLeastAtencionCliente } from './middleware/requireAuth.js';
 import { closeInactiveConversations } from './services/inactivity.service.js';
 import { syncAllTiendaNubeCustomers } from './services/customer.service.js';
+import { refreshRecentAttributions } from './services/campaign.service.js';
 import { sendEscalationFollowups } from './services/escalation.service.js';
 import { sendPickupFollowups } from './services/notifications.service.js';
 
@@ -59,6 +60,12 @@ cron.schedule('0 10 * * *', () => {
 // montos gastados / cantidad de pedidos / última compra al día para segmentar.
 cron.schedule('0 4 * * *', () => {
   syncAllTiendaNubeCustomers().catch(err => console.error('[cron] tiendanube sync error:', err.message));
+});
+
+// Ventas atribuidas a difusiones: después del sync de Tienda Nube (4am), con
+// margen por si el sync tarda.
+cron.schedule('0 6 * * *', () => {
+  refreshRecentAttributions().catch(err => console.error('[cron] attribution error:', err.message));
 });
 
 // Middleware
