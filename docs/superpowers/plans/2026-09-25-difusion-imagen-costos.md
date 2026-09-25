@@ -23,6 +23,8 @@
 - Tarifas en config: `pricing: { marketing, utility, arsRate }` (números o null). Nada de tarifas hardcodeadas.
 - Las campañas y plantillas existentes deben seguir funcionando igual (camino legacy `paramsTemplate` + `interpolate`).
 - Colecciones Firestore con prefijo `bot-altorancho_`.
+- En esta cuenta de Meta las plantillas con emoji quedaron colgadas en PENDING (2 veces): el composer avisa si el texto tiene emojis (no bloquea).
+- Desvío consciente del spec: `interpolate` NO se reemplaza por `resolveVars` para campañas legacy — se mueve tal cual a `legacyInterpolate` para no cambiar el formato de mensajes viejos (p.ej. `gastado` sin "$").
 - Comentarios y textos de UI en español rioplatense, mismo estilo que el código existente.
 - Commits terminan con `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
@@ -1502,6 +1504,9 @@ export default function TemplateComposer({ value, onChange, canUseButton, campai
           required
         />
         <p className={styles.hint}>No empieces ni termines el texto con un dato (Meta lo rechaza).</p>
+        {/\p{Extended_Pictographic}/u.test(value.bodyText) && (
+          <p className={styles.hint}>⚠ Tiene emojis: en esta cuenta las plantillas con emoji se quedaron trabadas en "pendiente" en Meta. Recomendado sacarlos.</p>
+        )}
       </div>
 
       <div>
@@ -1898,7 +1903,7 @@ git commit -m "feat(config): tarifas de WhatsApp para la calculadora + badges de
 Run: `cd server && npm test` y `cd client && npm test`
 Expected: PASS en ambos.
 
-- [ ] **Step 2: Confirmar con el usuario antes de pushear/deployar** (push dispara deploy del backend en Railway; el frontend se publica según el flujo habitual de ALTORANCHO). Verificar que `PUBLIC_BASE_URL` está seteada en Railway.
+- [ ] **Step 2: Confirmar con el usuario antes de pushear/deployar** (push dispara deploy del backend en Railway; el frontend NO es Vercel: `cd client && npm run build` y el usuario sube `client/dist/` a Hostinger a mano). Verificar que `PUBLIC_BASE_URL` está seteada en Railway.
 
 - [ ] **Step 3: Cargar tarifas** en Config con los valores de la tabla oficial de Meta (Argentina, Marketing y Utilidad) que confirme el usuario.
 
