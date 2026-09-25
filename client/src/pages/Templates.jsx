@@ -165,6 +165,8 @@ export default function Templates() {
                   >
                     <td className={styles.td}>
                       <span className={styles.nameBadge}>{t.name}</span>
+                      {t.headerFormat === 'IMAGE' && <span className={styles.meta}> · 🖼 Imagen</span>}
+                      {t.hasUrlButton && <span className={styles.meta}> · 🔗 Botón</span>}
                     </td>
                     <td className={styles.td}>
                       <span className={styles.displayName}>{t.displayName}</span>

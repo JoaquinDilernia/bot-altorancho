@@ -7,6 +7,8 @@ const DAYS_ES = {
   thursday: 'Jueves', friday: 'Viernes', saturday: 'Sábado', sunday: 'Domingo',
 };
 
+function toNum(v) { return v === '' ? null : Number(v); }
+
 export default function Config() {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -154,6 +156,32 @@ export default function Config() {
             que abre el link de tracking del pedido. <strong>Prendelo recién cuando las 3 plantillas en Meta tengan el botón URL aprobado</strong>{' '}
             (<code>https://livetracking.simpliroute.com/widget/account/100457/tracking/{'{{1}}'}</code>), si no Meta rechaza el envío.
           </p>
+        </section>
+
+        {/* Tarifas WhatsApp */}
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Tarifas WhatsApp (calculadora de difusiones)</h2>
+          <p className={styles.hint}>
+            Precio que cobra Meta por cada plantilla entregada en Argentina. Sacalo de la tabla oficial de precios de
+            WhatsApp Business y actualizalo cuando Meta lo cambie.
+          </p>
+          {[
+            ['marketing', 'USD por mensaje — Marketing', '0.0001'],
+            ['utility', 'USD por mensaje — Utilidad', '0.0001'],
+            ['arsRate', 'Cotización (ARS por 1 USD, opcional)', '1'],
+          ].map(([key, label, step]) => (
+            <div key={key} className={styles.field}>
+              <label className={styles.label}>{label}</label>
+              <input
+                className={styles.input}
+                type="number"
+                min="0"
+                step={step}
+                value={config.pricing?.[key] ?? ''}
+                onChange={(e) => setConfig({ ...config, pricing: { ...config.pricing, [key]: toNum(e.target.value) } })}
+              />
+            </div>
+          ))}
         </section>
 
         {/* Flujo de conversación */}
