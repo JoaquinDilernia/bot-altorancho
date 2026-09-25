@@ -74,4 +74,7 @@ export function assertSendable(campaign, { publicBaseUrl, now = new Date() }) {
   if (campaign.linkMode === 'button' && !publicBaseUrl) {
     throw badRequest('El botón necesita PUBLIC_BASE_URL configurada en el servidor');
   }
+  if ((campaign.linkMode === 'button' || campaign.linkMode === 'text') && !campaign.targetUrl?.trim()) {
+    throw badRequest('Esta plantilla lleva link: cargá la URL destino');
+  }
 }

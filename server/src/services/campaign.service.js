@@ -3,7 +3,7 @@ import admin from 'firebase-admin';
 import { getDb } from './firebase.service.js';
 import { listCustomers } from './customer.service.js';
 import { getOrCreateConversation, appendMessage, updateMessageStatus } from './conversation.service.js';
-import { sendWhatsAppTemplate, uploadMetaMedia, uploadTemplateSampleImage, ensureWhatsAppImageSize } from './meta.service.js';
+import { sendWhatsAppTemplate, uploadMetaMedia, uploadTemplateSampleImage, ensureWhatsAppImageSize, normalizeHeaderImage } from './meta.service.js';
 import { createTemplate, syncTemplateStatus } from './template.service.js';
 import { TEMPLATE_VARS, sampleValues } from './templateVars.js';
 import { validateComposer, buildRecipientMessage, assertSendable } from './campaignMessage.js';
@@ -187,6 +187,13 @@ export async function createCampaign(input) {
     e.status = 400;
     throw e;
   }
+  // Plantilla con botón/link en texto pero sin URL destino: manda "-" o un
+  // botón sin parámetro a todos los destinatarios — Meta rechaza el envío.
+  if ((input.linkMode === 'button' || input.linkMode === 'text') && !input.targetUrl?.trim()) {
+    const e = new Error('Esta plantilla lleva link: cargá la URL destino');
+    e.status = 400;
+    throw e;
+  }
   const doc = buildCampaignDoc(input);
   const ref = await getDb().collection(CAMPAIGNS).add(doc);
   return { id: ref.id, ...doc };
@@ -194,8 +201,22 @@ export async function createCampaign(input) {
 
 async function prepareImage(file) {
   if (!file) return null;
-  const { buffer, mimeType } = await ensureWhatsAppImageSize(file.buffer, file.mimetype);
-  return { buffer, mimeType };
+  const sized = await ensureWhatsAppImageSize(file.buffer, file.mimetype);
+  return normalizeHeaderImage(sized.buffer, sized.mimeType);
+}
+
+/** Envuelve uploadTemplateSampleImage/uploadMetaMedia: si Meta rechaza la
+    imagen, el error de axios (network-ish, sin .status) no le sirve de nada
+    al agente — acá se convierte en un 502 con el motivo que dio Meta. */
+async function uploadImageToMeta(uploadFn) {
+  try {
+    return await uploadFn();
+  } catch (err) {
+    const detail = err.response?.data?.error?.error_user_msg ?? err.response?.data?.error?.message ?? err.message;
+    const e = new Error(`No se pudo subir la imagen a Meta: ${detail}`);
+    e.status = 502;
+    throw e;
+  }
 }
 
 /** Difusión + plantilla nueva en un solo paso. Si Meta rechaza la plantilla
@@ -209,8 +230,8 @@ export async function createCampaignWithTemplate({ data, imageFile, publicBaseUr
   let handle = null;
   let mediaId = null;
   if (image) {
-    handle = await uploadTemplateSampleImage(image.buffer, image.mimeType);
-    mediaId = await uploadMetaMedia(image.buffer, image.mimeType);
+    handle = await uploadImageToMeta(() => uploadTemplateSampleImage(image.buffer, image.mimeType));
+    mediaId = await uploadImageToMeta(() => uploadMetaMedia(image.buffer, image.mimeType));
   }
 
   const labels = Object.fromEntries(TEMPLATE_VARS.map(v => [v.key, v.label]));
@@ -250,7 +271,7 @@ export async function setCampaignImage(campaignId, imageFile) {
   }
   if (!imageFile) { const e = new Error('No se recibió la imagen'); e.status = 400; throw e; }
   const image = await prepareImage(imageFile);
-  const mediaId = await uploadMetaMedia(image.buffer, image.mimeType);
+  const mediaId = await uploadImageToMeta(() => uploadMetaMedia(image.buffer, image.mimeType));
   const headerImage = { mediaId, uploadedAt: new Date() };
   await getDb().collection(CAMPAIGNS).doc(campaignId).update({ headerImage });
   return { ...campaign, headerImage };
@@ -292,7 +313,15 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
   const db = getDb();
   const campaign = await getCampaign(campaignId);
   if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
-  if (campaign.status !== 'draft') { const e = new Error('Esta campaña ya se envió'); e.status = 409; throw e; }
+  if (campaign.status !== 'draft') {
+    const STATUS_MESSAGES = {
+      pending_template: 'La plantilla todavía no fue aprobada por Meta',
+      template_rejected: 'Meta rechazó la plantilla de esta difusión',
+    };
+    const e = new Error(STATUS_MESSAGES[campaign.status] ?? 'Esta campaña ya se envió');
+    e.status = 409;
+    throw e;
+  }
   assertSendable(campaign, { publicBaseUrl });
 
   const recipients = (await resolveSegment(campaign.segment)).filter(c => c.channel === 'whatsapp');

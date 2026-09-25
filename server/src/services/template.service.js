@@ -1,5 +1,5 @@
 import { getDb } from './firebase.service.js';
-import { fetchMetaTemplateStatuses, createMetaTemplate } from './meta.service.js';
+import { fetchMetaTemplateStatuses, fetchMetaTemplateByName, createMetaTemplate } from './meta.service.js';
 
 const COLLECTION = 'bot-altorancho_whatsapp_templates';
 
@@ -108,7 +108,7 @@ export async function syncTemplateStatuses() {
 
 /** Sync de una sola plantilla — lo usa el polling de "Esperando aprobación". */
 export async function syncTemplateStatus(name, language) {
-  const metaTemplates = await fetchMetaTemplateStatuses();
+  const metaTemplates = await fetchMetaTemplateByName(name);
   const metaMatch = metaMatchFor(metaTemplates, name, language);
   if (!metaMatch) return { status: null, rejectedReason: null };
   const fields = syncFields(metaMatch);

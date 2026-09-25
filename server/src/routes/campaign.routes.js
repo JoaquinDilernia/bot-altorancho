@@ -123,4 +123,12 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Multer (ej: imagen > 16MB) u otro error no manejado en las rutas de arriba
+// llega acá en vez de tirar el HTML por defecto de Express — sin esto el
+// cliente rompe al hacer res.json() y el agente no sabe qué pasó.
+router.use((err, req, res, next) => {
+  if (err?.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'La imagen supera los 16 MB' });
+  res.status(err?.status ?? 500).json({ error: err?.message ?? 'Error interno' });
+});
+
 export default router;

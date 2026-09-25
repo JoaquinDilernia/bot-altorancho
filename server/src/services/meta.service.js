@@ -240,6 +240,18 @@ export async function ensureWhatsAppImageSize(buffer, mimeType) {
   return { buffer: output, mimeType: 'image/jpeg' };
 }
 
+// Meta sólo acepta JPEG o PNG como imagen de header de plantilla. Un formato
+// distinto (webp, heic, etc.) puede colarse acá porque ensureWhatsAppImageSize
+// sólo recomprime si supera el límite de tamaño — si ya pesaba poco, llega
+// intacto y Meta lo rechaza sin avisar bien. Lo convertimos siempre a JPEG.
+const ALLOWED_HEADER_MIME_TYPES = new Set(['image/jpeg', 'image/png']);
+
+export async function normalizeHeaderImage(buffer, mimeType) {
+  if (ALLOWED_HEADER_MIME_TYPES.has(mimeType)) return { buffer, mimeType };
+  const output = await sharp(buffer).rotate().jpeg({ quality: 85 }).toBuffer();
+  return { buffer: output, mimeType: 'image/jpeg' };
+}
+
 export async function uploadMetaMedia(buffer, mimeType) {
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_PHONE_NUMBER_ID) return null;
   const form = new FormData();
@@ -408,6 +420,22 @@ export async function fetchMetaTemplateStatuses() {
     console.error('[meta] fetchMetaTemplateStatuses error:', err.response?.data ?? err.message);
     return [];
   }
+}
+
+// A diferencia de fetchMetaTemplateStatuses (todas, hasta 100, sin paginar —
+// una difusión con más de 100 plantillas en la cuenta podía quedar afuera y
+// el polling de "esperando aprobación" nunca la encontraba), esta busca una
+// sola plantilla por nombre. No traga errores: el polling necesita enterarse
+// si Meta no respondió, en vez de asumir silenciosamente que sigue pendiente.
+export async function fetchMetaTemplateByName(name) {
+  const { data } = await axios.get(
+    `${META_API_URL}/${process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates`,
+    {
+      headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
+      params: { name, fields: 'name,status,language,category,components,rejected_reason', limit: 100 },
+    }
+  );
+  return data.data ?? [];
 }
 
 export function parseWhatsAppMessage(webhookBody) {

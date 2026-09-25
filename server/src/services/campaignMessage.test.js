@@ -91,3 +91,16 @@ test('assertSendable: botón sin PUBLIC_BASE_URL', () => {
 test('assertSendable: campaña legacy pasa', () => {
   assert.doesNotThrow(() => assertSendable({ paramsTemplate: [] }, { publicBaseUrl: null, now: new Date() }));
 });
+
+test('assertSendable: plantilla con link sin URL destino', () => {
+  const opts = { publicBaseUrl: 'https://bot.com', now: new Date() };
+  assert.throws(() => assertSendable({ linkMode: 'button', targetUrl: '' }, opts), is400(/URL destino/));
+  assert.throws(() => assertSendable({ linkMode: 'text', targetUrl: '   ' }, opts), is400(/URL destino/));
+  assert.throws(() => assertSendable({ linkMode: 'text', targetUrl: null }, opts), is400(/URL destino/));
+});
+
+test('assertSendable: sin link o campaña legacy no exigen URL destino', () => {
+  const opts = { publicBaseUrl: 'https://bot.com', now: new Date() };
+  assert.doesNotThrow(() => assertSendable({ linkMode: 'none', targetUrl: '' }, opts));
+  assert.doesNotThrow(() => assertSendable({ linkMode: undefined, targetUrl: '' }, opts));
+});
