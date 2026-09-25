@@ -37,7 +37,7 @@ export default function Campaigns() {
   const [composer, setComposer] = useState(EMPTY_COMPOSER);
   const [imageFile, setImageFile] = useState(null); // para plantillas aprobadas con header IMAGE
   const [pricing, setPricing] = useState(null);
-  const [canUseButton, setCanUseButton] = useState(false);
+  const [canUseButton, setCanUseButton] = useState(null); // null = todavía no respondió /meta-info
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
   const load = useCallback(async () => {
@@ -112,6 +112,9 @@ export default function Campaigns() {
   }
 
   const selectedTemplate = templates.find(t => t.id === form?.templateId);
+  // Plantilla creada desde Difusiones con botón o link en el texto: la URL
+  // destino deja de ser opcional (si no, se manda "-" o un botón sin link).
+  const existingTemplateNeedsUrl = form?.mode === 'existing' && (selectedTemplate?.linkMode === 'button' || selectedTemplate?.linkMode === 'text');
 
   const activeImage = form?.mode === 'new' ? composer.imageFile : imageFile;
   useEffect(() => {
@@ -142,7 +145,7 @@ export default function Campaigns() {
         }));
         if (composer.imageFile) fd.append('image', composer.imageFile);
         const res = await authFetch(BASE_URL + '/api/campaigns/with-template', { method: 'POST', body: fd });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         if (!res.ok) throw new Error(data.error);
         campaign = data.campaign;
       } else {
@@ -164,14 +167,14 @@ export default function Campaigns() {
             segment: form.segment,
           },
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         if (!res.ok) throw new Error(data.error);
         campaign = data.campaign;
         if (needsImage) {
           const fd = new FormData();
           fd.append('image', imageFile);
           const imgRes = await authFetch(BASE_URL + `/api/campaigns/${campaign.id}/image`, { method: 'POST', body: fd });
-          const imgData = await imgRes.json();
+          const imgData = await imgRes.json().catch(() => ({ error: `HTTP ${imgRes.status}` }));
           // La difusión ya quedó creada en el servidor aunque falle la imagen: no
           // tiramos error acá (dejaría el form abierto y un reintento duplicaría
           // la campaña). Guardamos el mensaje y lo mostramos después de abrir el
@@ -214,8 +217,9 @@ export default function Campaigns() {
   useEffect(() => {
     clearInterval(tplPollRef.current);
     if (detail?.campaign?.status === 'pending_template') {
-      tplPollRef.current = setInterval(async () => {
-        const res = await authFetch(BASE_URL + `/api/campaigns/${detail.campaign.id}/template-status`);
+      const campaignId = detail.campaign.id;
+      const checkTemplateStatus = async () => {
+        const res = await authFetch(BASE_URL + `/api/campaigns/${campaignId}/template-status`);
         if (res.ok) {
           const { campaign } = await res.json();
           if (campaign.status !== 'pending_template') {
@@ -223,7 +227,12 @@ export default function Campaigns() {
             setCampaigns(prev => prev.map(c => c.id === campaign.id ? campaign : c));
           }
         }
-      }, 10000);
+      };
+      // Chequea apenas se abre el detalle además de cada 10s — si no, el
+      // agente que abre una difusión ya aprobada hace rato espera hasta 10s
+      // viendo "Esperando aprobación" sin necesidad.
+      checkTemplateStatus();
+      tplPollRef.current = setInterval(checkTemplateStatus, 10000);
     }
     return () => clearInterval(tplPollRef.current);
   }, [detail?.campaign?.status, detail?.campaign?.id]);
@@ -233,7 +242,7 @@ export default function Campaigns() {
     const fd = new FormData();
     fd.append('image', file);
     const res = await authFetch(BASE_URL + `/api/campaigns/${detail.campaign.id}/image`, { method: 'POST', body: fd });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     if (!res.ok) { alert(`No se pudo subir la imagen: ${data.error}`); return; }
     setDetail(prev => ({ ...prev, campaign: data.campaign }));
   }
@@ -317,7 +326,7 @@ export default function Campaigns() {
                     {selectedTemplate?.headerFormat === 'IMAGE' && (
                       <div className={styles.field}>
                         <label className={styles.label}>Imagen de esta difusión</label>
-                        <input type="file" accept="image/*" onChange={e => setImageFile(e.target.files?.[0] ?? null)} required />
+                        <input type="file" accept="image/jpeg,image/png" onChange={e => setImageFile(e.target.files?.[0] ?? null)} required />
                       </div>
                     )}
 
@@ -348,8 +357,8 @@ export default function Campaigns() {
 
                 {(form.mode === 'new' ? composer.linkMode !== 'none' : true) && (
                   <div className={styles.field}>
-                    <label className={styles.label}>{form.mode === 'new' ? 'URL destino del link' : 'Link a trackear (opcional)'}</label>
-                    <input className={styles.input} type="url" value={form.targetUrl} onChange={e => setField('targetUrl', e.target.value)} placeholder="https://..." required={form.mode === 'new'} />
+                    <label className={styles.label}>{form.mode === 'new' || existingTemplateNeedsUrl ? 'URL destino del link' : 'Link a trackear (opcional)'}</label>
+                    <input className={styles.input} type="url" value={form.targetUrl} onChange={e => setField('targetUrl', e.target.value)} placeholder="https://..." required={form.mode === 'new' || existingTemplateNeedsUrl} />
                     <p className={styles.hint}>Cada contacto recibe un link corto propio para poder contar los clicks.</p>
                   </div>
                 )}
@@ -486,7 +495,7 @@ export default function Campaigns() {
                 )}
                 <label className={styles.btnSecondary}>
                   Cambiar imagen
-                  <input type="file" accept="image/*" hidden onChange={e => handleChangeImage(e.target.files?.[0])} />
+                  <input type="file" accept="image/jpeg,image/png" hidden onChange={e => handleChangeImage(e.target.files?.[0])} />
                 </label>
               </div>
             )}

@@ -9,7 +9,11 @@ export const EMPTY_COMPOSER = {
 
 export default function TemplateComposer({ value, onChange, canUseButton, campaignName }) {
   const textRef = useRef(null);
-  const set = (patch) => onChange({ ...value, ...patch });
+  // Updater funcional: si dos set() se disparan en el mismo ciclo (ej. el
+  // efecto del nombre técnico y el del botón corriendo juntos), cada uno
+  // tiene que partir del estado más reciente y no de un `value` de props
+  // que quedó viejo — si no, el segundo pisa lo que hizo el primero.
+  const set = (patch) => onChange(prev => ({ ...prev, ...patch }));
 
   // El nombre técnico sigue al nombre de la difusión hasta que lo editan a mano
   useEffect(() => {
@@ -17,8 +21,11 @@ export default function TemplateComposer({ value, onChange, canUseButton, campai
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignName]);
 
+  // canUseButton arranca en null (todavía no respondió /meta-info) — sólo
+  // hay que bajar el botón a "texto" cuando ya se confirmó que no se puede,
+  // nunca mientras está cargando (si no, se pisa la elección del agente).
   useEffect(() => {
-    if (!canUseButton && value.linkMode === 'button') set({ linkMode: 'text' });
+    if (canUseButton === false && value.linkMode === 'button') set({ linkMode: 'text' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseButton]);
 
@@ -57,7 +64,7 @@ export default function TemplateComposer({ value, onChange, canUseButton, campai
 
       <div>
         <label className={styles.label}>Imagen (opcional)</label>
-        <input type="file" accept="image/*" onChange={e => set({ imageFile: e.target.files?.[0] ?? null })} />
+        <input type="file" accept="image/jpeg,image/png" onChange={e => set({ imageFile: e.target.files?.[0] ?? null })} />
       </div>
 
       <div>
@@ -100,13 +107,13 @@ export default function TemplateComposer({ value, onChange, canUseButton, campai
               type="button"
               className={`${styles.segBtn} ${value.linkMode === mode ? styles.segBtnActive : ''}`}
               onClick={() => set({ linkMode: mode })}
-              disabled={mode === 'button' && !canUseButton}
+              disabled={mode === 'button' && canUseButton === false}
             >
               {label}
             </button>
           ))}
         </div>
-        {!canUseButton && <p className={styles.hint}>El botón necesita PUBLIC_BASE_URL configurada en el servidor.</p>}
+        {canUseButton === false && <p className={styles.hint}>El botón necesita PUBLIC_BASE_URL configurada en el servidor.</p>}
         {value.linkMode === 'button' && (
           <input
             className={styles.input}
