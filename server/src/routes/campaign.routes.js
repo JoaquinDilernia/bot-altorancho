@@ -10,6 +10,7 @@ import {
   refreshTemplateStatus,
   deleteCampaign,
   sendCampaign,
+  sendCampaignTest,
   resolveSegment,
 } from '../services/campaign.service.js';
 
@@ -108,6 +109,17 @@ router.post('/:id/send', async (req, res) => {
     // PUBLIC_BASE_URL: si no está seteada, la campaña igual se manda pero
     // sin link corto trackeable (ver campaign.service.js:sendCampaign).
     const result = await sendCampaign(req.params.id, publicBaseUrl());
+    res.json(result);
+  } catch (err) {
+    res.status(err.status ?? 500).json({ error: err.message });
+  }
+});
+
+router.post('/:id/test', async (req, res) => {
+  try {
+    const result = await sendCampaignTest(req.params.id, req.body.phones, {
+      publicBaseUrl: publicBaseUrl(), sentBy: req.agent?.email ?? null,
+    });
     res.json(result);
   } catch (err) {
     res.status(err.status ?? 500).json({ error: err.message });

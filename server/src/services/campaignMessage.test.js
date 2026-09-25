@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateComposer, buildRecipientMessage, assertSendable, isImageExpired, legacyInterpolate } from './campaignMessage.js';
+import { validateComposer, buildRecipientMessage, assertSendable, isImageExpired, legacyInterpolate, parseTestPhones } from './campaignMessage.js';
 
 const base = { templateName: 'promo_0925', bodyText: 'Hola {{primer_nombre}}, mirá la promo.', linkMode: 'button', buttonText: 'Ver promo', targetUrl: 'https://tienda.com/promo', publicBaseUrl: 'https://bot.com' };
 const is400 = (re) => (e) => e.status === 400 && (!re || re.test(e.message));
@@ -103,4 +103,29 @@ test('assertSendable: sin link o campaña legacy no exigen URL destino', () => {
   const opts = { publicBaseUrl: 'https://bot.com', now: new Date() };
   assert.doesNotThrow(() => assertSendable({ linkMode: 'none', targetUrl: '' }, opts));
   assert.doesNotThrow(() => assertSendable({ linkMode: undefined, targetUrl: '' }, opts));
+});
+
+test('parseTestPhones: varios números, cualquier formato, normalizados y sin repetidos', () => {
+  assert.deepEqual(
+    parseTestPhones('11 5555-1234, +54 9 11 5555 1234\n1144443333; 5491166667777'),
+    ['5491155551234', '5491144443333', '5491166667777'],
+  );
+});
+
+test('parseTestPhones: acepta array', () => {
+  assert.deepEqual(parseTestPhones(['1155551234', '1144443333']), ['5491155551234', '5491144443333']);
+});
+
+test('parseTestPhones: número inválido → 400 que lo nombra', () => {
+  assert.throws(() => parseTestPhones('1155551234, 123'), (e) => e.status === 400 && /123/.test(e.message));
+});
+
+test('parseTestPhones: vacío → 400', () => {
+  assert.throws(() => parseTestPhones('  , '), (e) => e.status === 400);
+  assert.throws(() => parseTestPhones(undefined), (e) => e.status === 400);
+});
+
+test('parseTestPhones: más de 10 → 400', () => {
+  const many = Array.from({ length: 11 }, (_, i) => `11555500${String(i).padStart(2, '0')}`).join(',');
+  assert.throws(() => parseTestPhones(many), (e) => e.status === 400 && /10/.test(e.message));
 });

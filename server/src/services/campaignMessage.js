@@ -1,4 +1,5 @@
 import { toMetaBody, resolveVars } from './templateVars.js';
+import { toWaContactId } from './phone.js';
 
 // Lógica pura de difusiones (validación del composer y armado del mensaje
 // por destinatario) separada de campaign.service.js para poder testearla
@@ -77,4 +78,24 @@ export function assertSendable(campaign, { publicBaseUrl, now = new Date() }) {
   if ((campaign.linkMode === 'button' || campaign.linkMode === 'text') && !campaign.targetUrl?.trim()) {
     throw badRequest('Esta plantilla lleva link: cargá la URL destino');
   }
+}
+
+const MAX_TEST_PHONES = 10;
+
+/** Números para "Enviar prueba": texto libre (coma, punto y coma o uno por
+    línea) o array. Se canonicalizan igual que el resto del sistema para que
+    la prueba caiga en el mismo chat que usa el webhook. */
+export function parseTestPhones(input) {
+  const raw = Array.isArray(input) ? input : String(input ?? '').split(/[,;\n]+/);
+  const phones = [];
+  for (const item of raw) {
+    const text = String(item).trim();
+    if (!text) continue;
+    const id = toWaContactId(text);
+    if (!id || !/^\d{10,15}$/.test(id)) throw badRequest(`Número inválido: ${text}`);
+    if (!phones.includes(id)) phones.push(id);
+  }
+  if (phones.length === 0) throw badRequest('Cargá al menos un número de prueba');
+  if (phones.length > MAX_TEST_PHONES) throw badRequest(`Máximo ${MAX_TEST_PHONES} números por prueba`);
+  return phones;
 }

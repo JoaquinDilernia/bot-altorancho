@@ -37,6 +37,9 @@ export default function Campaigns() {
   const [composer, setComposer] = useState(EMPTY_COMPOSER);
   const [imageFile, setImageFile] = useState(null); // para plantillas aprobadas con header IMAGE
   const [pricing, setPricing] = useState(null);
+  const [testPhones, setTestPhones] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResults, setTestResults] = useState(null);
   const [canUseButton, setCanUseButton] = useState(null); // null = todavía no respondió /meta-info
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
@@ -55,7 +58,11 @@ export default function Campaigns() {
       // Conversations.jsx) — sólo sirven las que Meta ya aprobó.
       if (tplRes.ok) setTemplates((await tplRes.json()).filter(t => t.metaStatus === 'APPROVED'));
       if (tagsRes.ok) setAllTags((await tagsRes.json()).tags ?? []);
-      if (cfgRes.ok) setPricing((await cfgRes.json()).config?.pricing ?? null);
+      if (cfgRes.ok) {
+        const { config } = await cfgRes.json();
+        setPricing(config?.pricing ?? null);
+        if (config?.campaignTestPhones?.length) setTestPhones(config.campaignTestPhones.join(', '));
+      }
       if (infoRes.ok) setCanUseButton(!!(await infoRes.json()).canUseButton);
     } finally {
       setLoading(false);
@@ -194,6 +201,7 @@ export default function Campaigns() {
   }
 
   async function openDetail(campaignStub) {
+    setTestResults(null);
     const res = await authFetch(BASE_URL + `/api/campaigns/${campaignStub.id}`);
     if (res.ok) setDetail(await res.json());
   }
@@ -245,6 +253,22 @@ export default function Campaigns() {
     const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     if (!res.ok) { alert(`No se pudo subir la imagen: ${data.error}`); return; }
     setDetail(prev => ({ ...prev, campaign: data.campaign }));
+  }
+
+  async function handleTestSend() {
+    if (!detail) return;
+    setTesting(true);
+    setTestResults(null);
+    try {
+      const res = await authFetch(BASE_URL + `/api/campaigns/${detail.campaign.id}/test`, { method: 'POST', body: { phones: testPhones } });
+      const data = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+      if (!res.ok) throw new Error(data.error);
+      setTestResults(data.results);
+    } catch (err) {
+      alert(`No se pudo enviar la prueba: ${err.message}`);
+    } finally {
+      setTesting(false);
+    }
   }
 
   async function handleSend() {
@@ -501,6 +525,34 @@ export default function Campaigns() {
               </div>
             )}
 
+            {detail.campaign.status === 'draft' && (
+              <div className={styles.testBox}>
+                <label className={styles.label}>Enviar prueba</label>
+                <textarea
+                  className={styles.input}
+                  rows={2}
+                  value={testPhones}
+                  onChange={e => setTestPhones(e.target.value)}
+                  placeholder="11 5555-1234, 11 4444-3333"
+                />
+                <p className={styles.hint}>
+                  Uno o varios números (hasta 10), separados por coma o uno por línea. Reciben el mismo mensaje, pero no
+                  cuenta en las estadísticas ni cambia el estado de la difusión. Meta cobra cada prueba como un mensaje más.
+                </p>
+                <button type="button" className={styles.btnSecondary} onClick={handleTestSend} disabled={testing || !testPhones.trim()}>
+                  {testing ? 'Enviando prueba…' : '🧪 Enviar prueba'}
+                </button>
+                {testResults && (
+                  <ul className={styles.testResults}>
+                    {testResults.map(r => (
+                      <li key={r.phone} className={r.ok ? styles.testOk : styles.testFail}>
+                        {r.ok ? '✓' : '✗'} {r.phone}{r.error ? ` — ${r.error}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             {detail.campaign.status === 'draft' && (
               <button className={styles.btnPrimary} onClick={handleSend} disabled={sending}>
                 {sending ? 'Enviando…' : '🚀 Enviar difusión ahora'}

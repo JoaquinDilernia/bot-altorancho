@@ -6,7 +6,7 @@ import { getOrCreateConversation, appendMessage, updateMessageStatus } from './c
 import { sendWhatsAppTemplate, uploadMetaMedia, uploadTemplateSampleImage, ensureWhatsAppImageSize, normalizeHeaderImage } from './meta.service.js';
 import { createTemplate, syncTemplateStatus } from './template.service.js';
 import { TEMPLATE_VARS, sampleValues } from './templateVars.js';
-import { validateComposer, buildRecipientMessage, assertSendable } from './campaignMessage.js';
+import { validateComposer, buildRecipientMessage, assertSendable, parseTestPhones } from './campaignMessage.js';
 import { toWaContactId } from './phone.js';
 
 const CAMPAIGNS = 'bot-altorancho_campaigns';
@@ -391,4 +391,57 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
   })().catch(err => console.error('[campaign] Error en el envío en background:', err));
 
   return { ok: true, total: recipients.length };
+}
+
+/**
+ * "Enviar prueba": manda el mismo mensaje de la difusión a unos pocos números
+ * antes del envío real. No toca stats, SENDS ni el estado de la campaña, y el
+ * link corto se crea sin campaignId para que sus clicks no cuenten. Si el
+ * número ya es contacto, sale con sus datos reales; si no, con los fallbacks.
+ * Los números quedan guardados en la config para la próxima prueba.
+ */
+export async function sendCampaignTest(campaignId, phonesInput, { publicBaseUrl, sentBy }) {
+  const campaign = await getCampaign(campaignId);
+  if (!campaign) { const e = new Error('Campaña no encontrada'); e.status = 404; throw e; }
+  if (campaign.status !== 'draft') {
+    const e = new Error('La prueba se puede mandar cuando la plantilla ya está aprobada y antes del envío real');
+    e.status = 409;
+    throw e;
+  }
+  assertSendable(campaign, { publicBaseUrl });
+  const phones = parseTestPhones(phonesInput);
+
+  const db = getDb();
+  await db.collection('bot-altorancho_config').doc('bot_config').set({ campaignTestPhones: phones }, { merge: true });
+
+  const customers = await listCustomers({});
+  const results = [];
+  for (const phone of phones) {
+    const contact = customers.find(c => toWaContactId(c.contactId) === phone) ?? { contactId: phone, contactName: null };
+    let shortCode = null;
+    let link = campaign.targetUrl;
+    if (campaign.targetUrl && publicBaseUrl && campaign.linkMode !== 'none') {
+      shortCode = await createShortLink({ targetUrl: campaign.targetUrl, campaignId: null, contactId: phone });
+      link = `${publicBaseUrl}/r/${shortCode}`;
+    }
+    const { params, urlButtonParam, headerImageId } = buildRecipientMessage({ campaign, contact, link, shortCode });
+
+    await getOrCreateConversation(phone, 'whatsapp', contact.contactName);
+    const msgId = crypto.randomUUID();
+    const prefix = `[Prueba difusión: ${campaign.templateName}]${headerImageId ? ' [Imagen]' : ''}`;
+    const text = params.filter(Boolean).length > 0 ? `${prefix} ${params.join(' | ')}` : prefix;
+    await appendMessage(phone, { role: 'admin', content: text, msgId, msgStatus: 'sending', sentBy });
+
+    let error = null;
+    let waMsgId = null;
+    try {
+      waMsgId = await sendWhatsAppTemplate(phone, campaign.templateName, campaign.language, params, urlButtonParam, headerImageId);
+    } catch (err) {
+      error = err.response?.data?.error?.error_user_msg ?? err.response?.data?.error?.message ?? err.message;
+    }
+    await updateMessageStatus(phone, msgId, error ? 'error' : 'sent', waMsgId).catch(() => {});
+    results.push({ phone, ok: !error, error });
+    await new Promise(r => setTimeout(r, SEND_THROTTLE_MS));
+  }
+  return { results };
 }
