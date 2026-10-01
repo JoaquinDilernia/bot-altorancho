@@ -350,6 +350,7 @@ export default function Conversations() {
   const { agent } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [showMobileProfile, setShowMobileProfile] = useState(false); // mobile-only: perfil como panel deslizable
   const [messages, setMessages] = useState([]);
   const [customer, setCustomer] = useState(null);
   const [notes, setNotes] = useState('');
@@ -471,6 +472,7 @@ export default function Conversations() {
     setTemplateParams([]);
     setTemplateSendError('');
     setReplyingTo(null);
+    setShowMobileProfile(false);
     pollMsgRef.current = setInterval(() => loadMessages(selectedIdRef.current), 5000);
     return () => clearInterval(pollMsgRef.current);
   }, [selected?.id]);
@@ -882,7 +884,7 @@ export default function Conversations() {
   return (
     <div className={styles.page}>
       {/* ---- Sidebar ---- */}
-      <aside className={styles.sidebar}>
+      <aside className={`${styles.sidebar} ${selected ? styles.mobileHiddenPanel : ''}`}>
         <div className={styles.sidebarHeader}>
           <div className={styles.sidebarTop}>
             <h1 className={styles.sidebarTitle}>Conversaciones</h1>
@@ -962,7 +964,7 @@ export default function Conversations() {
       </aside>
 
       {/* ---- Thread ---- */}
-      <main className={styles.thread}>
+      <main className={`${styles.thread} ${!selected ? styles.mobileHiddenPanel : ''}`}>
         {!selected ? (
           <div className={styles.threadEmpty}>
             <div className={styles.threadEmptyIcon}>💬</div>
@@ -973,11 +975,27 @@ export default function Conversations() {
             <div className={styles.threadHeader}>
               {/* Row 1: name + close/reopen */}
               <div className={styles.threadHeaderTop}>
+                <button
+                  type="button"
+                  className={styles.backBtn}
+                  onClick={() => setSelected(null)}
+                  title="Volver al listado"
+                >
+                  ←
+                </button>
                 <span className={styles.threadName}>
                   {selected.contactName || selected.contactId}
                   {isUrgentFlag && <span style={{ marginLeft: 6, fontSize: 14 }}>⚡</span>}
                 </span>
                 <div className={styles.threadActions}>
+                  <button
+                    type="button"
+                    className={styles.profileToggleBtn}
+                    onClick={() => setShowMobileProfile(v => !v)}
+                    title="Ver perfil del cliente"
+                  >
+                    👤
+                  </button>
                   {isArchived ? (
                     <button className={`${styles.actionBtn} ${styles.actionReopen}`} onClick={() => dispatch('to_bot')} disabled={updating}>
                       ↩ Reabrir
@@ -1358,8 +1376,20 @@ export default function Conversations() {
 
       {/* ---- Profile Panel ---- */}
       {selected && (
-        <aside className={styles.profilePanel}>
+        <>
+          {showMobileProfile && (
+            <div className={styles.profileBackdrop} onClick={() => setShowMobileProfile(false)} />
+          )}
+          <aside className={`${styles.profilePanel} ${showMobileProfile ? styles.profilePanelOpen : ''}`}>
           <div className={styles.profileHeader}>
+            <button
+              type="button"
+              className={styles.profileCloseBtn}
+              onClick={() => setShowMobileProfile(false)}
+              title="Cerrar"
+            >
+              ✕
+            </button>
             <span className={styles.profileTitle}>Perfil del cliente</span>
             <button className={styles.syncBtn} onClick={syncCustomer} disabled={syncing} title="Sincronizar con Tienda Nube">
               {syncing ? '...' : '↻ TN'}
@@ -1487,7 +1517,8 @@ export default function Conversations() {
           ) : (
             <p className={styles.profileEmpty}>Sin perfil aún.</p>
           )}
-        </aside>
+          </aside>
+        </>
       )}
 
       {/* ---- Nueva Conversación Modal ---- */}

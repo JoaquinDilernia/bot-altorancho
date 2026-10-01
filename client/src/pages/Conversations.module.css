@@ -1859,3 +1859,105 @@
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
 }
+
+
+/* ==================== MOBILE LAYOUT ====================
+   Desktop se queda igual (3 columnas fijas). En mobile se muestra un solo
+   panel a la vez, tipo WhatsApp: lista de chats -> tocás uno -> hilo a
+   pantalla completa con botón "atrás". El perfil pasa a ser un panel
+   deslizable que se abre con el ícono 👤 del header del hilo. */
+
+.backBtn,
+.profileToggleBtn,
+.profileCloseBtn {
+  display: none;
+}
+
+.profileBackdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar {
+    width: 100%;
+  }
+
+  .thread {
+    width: 100%;
+  }
+
+  /* Oculta el panel que no corresponde a la vista actual (lista vs. hilo),
+     controlado desde JS vía la clase condicional según haya o no
+     conversación seleccionada — en desktop esta clase no hace nada. */
+  .mobileHiddenPanel {
+    display: none;
+  }
+
+  .backBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    font-size: 18px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--color-text);
+  }
+
+  .profileToggleBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    font-size: 15px;
+    background: var(--color-surface-alt);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .profileCloseBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: none;
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+    color: var(--color-text);
+  }
+
+  /* El perfil deja de ser una columna fija y pasa a ser un panel que se
+     desliza desde la derecha, por encima del hilo. */
+  .profilePanel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 85vw;
+    max-width: 320px;
+    z-index: 30;
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.15);
+    transform: translateX(100%);
+    transition: transform var(--transition-fast, 0.2s) ease;
+  }
+
+  .profilePanelOpen {
+    transform: translateX(0);
+  }
+
+  .profileBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 25;
+  }
+}
