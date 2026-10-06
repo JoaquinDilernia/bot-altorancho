@@ -476,7 +476,7 @@ export async function computeCampaignAttribution(campaignId, { refreshClicked = 
     invalidateCustomersCache();
   }
 
-  const customers = mergeContactsByPhone(await listCustomers({}));
+  const customers = mergeContactsByPhone(await listCustomers({}, { withOrders: true }));
   const customersById = new Map();
   for (const c of customers) customersById.set(c.contactId, c);
 

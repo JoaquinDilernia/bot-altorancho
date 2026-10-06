@@ -307,7 +307,7 @@ async function fetchAllCustomerDocs() {
  * @param {number}   [filters.lastOrderMaxDays] última compra hace <= N días (activos)
  * @param {number}   [filters.lastOrderMinDays] última compra hace >= N días (recompra)
  */
-export async function listCustomers(filters = {}) {
+export async function listCustomers(filters = {}, { withOrders = false } = {}) {
   let docs = await fetchAllCustomerDocs();
 
   const num = (v) => (v === '' || v === null || v === undefined || isNaN(Number(v)) ? null : Number(v));
@@ -353,6 +353,9 @@ export async function listCustomers(filters = {}) {
   }
 
   docs.sort((a, b) => tsToMs(b.lastContactAt ?? b.createdAt) - tsToMs(a.lastContactAt ?? a.createdAt));
+  // El panel no necesita el detalle de pedidos (pesa); la atribución de
+  // ventas de difusiones sí (withOrders).
+  if (withOrders) return docs;
   return docs.map(({ tnOrders, ...rest }) => rest);
 }
 
