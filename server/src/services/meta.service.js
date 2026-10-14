@@ -533,6 +533,10 @@ export function parseInstagramMessage(webhookBody) {
     const messaging = entry?.messaging?.[0];
 
     if (!messaging?.message) return null;
+    // Cada mensaje que mandamos vuelve como "echo" con nuestra propia cuenta
+    // de IG como sender — si no lo ignoramos, el bot se contesta a sí mismo.
+    if (messaging.message.is_echo) return null;
+    if (process.env.META_IG_PAGE_ID && messaging.sender?.id === process.env.META_IG_PAGE_ID) return null;
 
     const attachments = messaging.message.attachments ?? [];
     const imageAttachment = attachments.find(a => a.type === 'image');
