@@ -434,3 +434,25 @@ export function formatOrderStatus(order) {
     nota: order.note ?? null,
   };
 }
+
+/**
+ * Disponibilidad ONLINE (stock de TiendaNube) por variante, como etiqueta —
+ * nunca cantidades. `stock: null` = sin control de stock (ilimitado).
+ * Complementa el stock por sucursal que viene de Odoo.
+ * @param {object} product - resultado crudo de searchProducts()
+ * @returns {string|null}
+ */
+export function formatWebStock(product) {
+  const variants = product?.variants ?? [];
+  if (!variants.length) return null;
+  const lines = variants.map(v => {
+    const label = (v.values ?? []).map(val => val?.es ?? val?.en ?? Object.values(val ?? {})[0]).filter(Boolean).join(' / ') || 'Único';
+    let availability;
+    if (v.stock_management === false || v.stock === null || v.stock === undefined) availability = 'Disponible';
+    else if (v.stock <= 0) availability = 'Sin stock';
+    else if (v.stock < 3) availability = 'Quedan pocos';
+    else availability = 'Disponible';
+    return `- ${label}: ${availability}`;
+  });
+  return `Disponibilidad en la tienda online (web):\n${lines.join('\n')}`;
+}

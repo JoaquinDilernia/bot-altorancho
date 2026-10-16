@@ -169,6 +169,17 @@ export async function generateBotResponse(userMessage, conversationHistory, cont
   return extractText(response);
 }
 
+// Sin la fecha, el modelo no sabe qué día es: un aviso de la KB como "el
+// lunes 28/9 los locales están cerrados" no lo puede cruzar con un "¿hoy
+// abren?" del cliente, y termina contestando "sí, hoy sábado abrimos".
+function buildCurrentDateInstructions() {
+  const now = new Date();
+  const tz = 'America/Argentina/Buenos_Aires';
+  const fecha = now.toLocaleDateString('es-AR', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'numeric', year: 'numeric' });
+  const hora = now.toLocaleTimeString('es-AR', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+  return `\n\n--- FECHA Y HORA ACTUAL ---\nHoy es ${fecha}, son las ${hora} (hora de Argentina). Usá esto para interpretar "hoy", "mañana", "el finde", etc. — nunca supongas otro día. Si la información de la tienda tiene un aviso con fecha (feriados, cierres, horarios especiales) que cae hoy o en el día que menciona el cliente, avisalo SIEMPRE cuando el cliente hable de ir, pasar o retirar en un local, o pregunte si están abiertos — antes de pasarle los horarios habituales.`;
+}
+
 function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], departments = [], customerTags = []) {
   const botName = botConfig.botName || 'Asistente';
   const businessName = botConfig.businessName || 'Alto Rancho';
@@ -182,6 +193,7 @@ Cuando tenés información de un pedido, la compartís directamente sin pedir ve
 Si el nombre del titular del pedido es distinto al nombre de la persona que te escribe, IGUAL compartís la información con normalidad — puede ser un regalo, una compra para otra persona, o simplemente puso otro nombre al comprar. Nunca niegues ni condiciones la información de un pedido a que el nombre coincida.`;
 
   let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
+  prompt += buildCurrentDateInstructions();
   prompt += buildEscalationInstructions(departments);
   if (knowledgeBase) {
     prompt += `\n\n--- INFORMACIÓN DE LA TIENDA ---\n${knowledgeBase}`;
@@ -216,13 +228,14 @@ Los items marcados con 🔥 son promociones u ofertas vigentes que queremos impu
 - Como último recurso, pedile el email para buscar por ahí.`;
   }
   if (stockInfo) {
-    prompt += `\n\n--- STOCK EN SUCURSALES ---\n${stockInfo}`;
+    prompt += `\n\n--- STOCK (SUCURSALES Y WEB) ---\n${stockInfo}`;
     prompt += `\n\nGuía para interpretar la disponibilidad:
 - "Disponible" → hay stock suficiente en ese local.
 - "Quedan pocos" → hay unidades pero puede agotarse pronto. Avisale al cliente que el stock puede variar y que conviene confirmar antes de ir.
 - "No disponible" → sin stock en ese local al momento de la consulta.
 - Nunca menciones cantidades numéricas — solo usás las etiquetas anteriores.
 - Siempre agregá el disclaimer: "El stock puede variar por las ventas del local."
+- Si aparece "Disponibilidad en la tienda online (web)", es el stock para comprar por la web (TiendaNube), por variante (talle/color/etc.) — "Sin stock" significa que no se puede comprar online. Usalo cuando pregunten por la web, por envío o en general por disponibilidad; no lo confundas con el stock de los locales. Si solo viene el stock web, no inventes stock de sucursales.
 
 Si el producto es de EXHIBICIÓN (aparece "Producto de exhibición" en los datos):
 - "Exhibido" → el cliente puede ir a verlo al local.

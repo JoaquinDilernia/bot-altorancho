@@ -12,7 +12,7 @@ import {
   addLabelToConversation,
   setMenuState,
 } from './conversation.service.js';
-import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts, formatWebStock } from './tiendanube.service.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo, findPosOrder, findPosOrdersByContact, formatPosOrder, LOCAL_STORES } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
 import {
@@ -832,25 +832,38 @@ async function resolveStockContext(text) {
     const products = await searchProducts(cleanProductQuery(text));
     if (!products?.length) return null;
 
+    const nameOf = p => {
+      const n = p.name;
+      return typeof n === 'string' ? n
+        : (n?.es ?? n?.en ?? Object.values(n ?? {})[0] ?? 'Producto');
+    };
+
     let sku = null;
     let productName = null;
+    let tnProduct = null;
     for (const p of products) {
       const variants = p.variants ?? [];
       const withSku = variants.find(v => v.sku);
       if (withSku) {
         sku = withSku.sku;
-        const n = p.name;
-        productName = typeof n === 'string' ? n
-          : (n?.es ?? n?.en ?? Object.values(n ?? {})[0] ?? 'Producto');
+        productName = nameOf(p);
+        tnProduct = p;
         break;
       }
     }
 
-    if (!sku) return null;
+    // Sin SKU no hay forma de consultar Odoo (sucursales), pero el stock web
+    // de TiendaNube sí se puede informar igual.
+    if (!sku) {
+      const webOnly = formatWebStock(products[0]);
+      return webOnly ? `Producto: ${nameOf(products[0])}\n${webOnly}` : null;
+    }
 
     const stockResult = await getStockBySku(sku);
     console.log(`[bot] stock para SKU ${sku}:`, stockResult);
-    return formatStockInfo(productName, sku, stockResult);
+    const storeStock = formatStockInfo(productName, sku, stockResult);
+    const webStock = formatWebStock(tnProduct);
+    return webStock ? `${storeStock}\n\n${webStock}` : storeStock;
   } catch (err) {
     console.error('[bot] resolveStockContext error:', err.message);
     return null;
