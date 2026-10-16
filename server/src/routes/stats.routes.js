@@ -267,10 +267,12 @@ router.get('/', async (req, res) => {
     const avgFirstResponseMin = avg(firstResponseSamples);
     const avgResolutionMin = avg(resolutionSamples);
 
+    // Todas las etiquetas (antes se cortaba al top 8 y las chicas no se podían ver).
+    // Las conversaciones de cada etiqueta se piden aparte (/labels/conversations)
+    // al tocarla, para no mandar miles de filas en cada carga.
     const labelCounts = Object.entries(labelMap)
       .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
     // Las conversaciones derivadas a un departamento (sin asignar todavía a
     // una persona puntual) ya se cuentan en "Por departamento" — antes acá
@@ -323,6 +325,35 @@ router.get('/', async (req, res) => {
     });
   } catch (err) {
     console.error('[stats]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Conversaciones de una etiqueta en el período — mismo criterio que labelCounts
+// (actividad, updatedAt, dentro del rango), así la lista coincide con el número.
+router.get('/labels/conversations', async (req, res) => {
+  try {
+    const label = req.query.label;
+    if (!label) return res.status(400).json({ error: 'Falta la etiqueta' });
+    const { start, end } = getPeriodRange(req.query.period ?? 'week', req.query.from, req.query.to);
+    const snap = await getDb().collection('bot-altorancho_conversations')
+      .where('updatedAt', '>=', admin.firestore.Timestamp.fromDate(start))
+      .where('updatedAt', '<=', admin.firestore.Timestamp.fromDate(end))
+      .get();
+    const conversations = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(c => (c.labels ?? []).includes(label))
+      .map(c => ({
+        id: c.id,
+        contactName: c.contactName ?? null,
+        channel: c.channel ?? 'whatsapp',
+        status: c.status === 'urgent' ? 'bot' : (c.status ?? 'bot'),
+        lastActivityAt: toDate(c.updatedAt)?.toISOString() ?? null,
+      }))
+      .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''));
+    res.json({ label, conversations });
+  } catch (err) {
+    console.error('[stats/labels]', err);
     res.status(500).json({ error: err.message });
   }
 });
