@@ -244,6 +244,7 @@ export default function Stats() {
           <div className={styles.grid2}>
             <section className={styles.section}>
               <h2 className={styles.sectionTitle}>Por agente</h2>
+              <p className={styles.labelHint}>Conversaciones en las que respondió cada uno en el período (un chat puede tener respuestas del bot y de un agente).</p>
               <div className={styles.agentRows}>
                 {data.byAgent.map((a, idx) => {
                   const color = agentColor(idx);
@@ -253,7 +254,7 @@ export default function Stats() {
                         <span className={styles.dot} style={{ background: color }} />
                         <div>
                           <div className={styles.agentName}>{a.name}</div>
-                          <div className={styles.agentSub}>{a.handled} conv · {a.resolved} res.</div>
+                          <div className={styles.agentSub}>{a.handled} conv respondidas · {a.messages ?? 0} msj · {a.resolved} res.</div>
                         </div>
                       </div>
                       <div className={styles.hBarTrack}>

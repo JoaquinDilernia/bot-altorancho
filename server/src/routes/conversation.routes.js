@@ -89,7 +89,7 @@ router.post('/start', async (req, res) => {
       : `[Plantilla: ${templateName}]`;
 
     // Save with 'sending' status before attempting send
-    await appendMessage(normalizedPhone, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', agentName: req.agent.name });
+    await appendMessage(normalizedPhone, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', agentName: req.agent.name, agentEmail: req.agent.email });
 
     let sendError = null;
     let waMsgId = null;
@@ -309,7 +309,7 @@ router.post('/:contactId/reply', async (req, res) => {
 
     // Save message immediately with 'sending' status
     await appendMessage(contactId, {
-      role: 'admin', content: message.trim(), msgId, msgStatus: 'sending', agentName: req.agent.name,
+      role: 'admin', content: message.trim(), msgId, msgStatus: 'sending', agentName: req.agent.name, agentEmail: req.agent.email,
       ...(replyTo && { replyTo: { role: replyTo.role, preview: replyTo.preview } }),
     });
 
@@ -370,7 +370,7 @@ router.post('/:contactId/send-template', async (req, res) => {
       ? `[Plantilla: ${templateName}] ${params.join(' | ')}`
       : `[Plantilla: ${templateName}]`;
 
-    await appendMessage(contactId, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', agentName: req.agent.name });
+    await appendMessage(contactId, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', agentName: req.agent.name, agentEmail: req.agent.email });
 
     let sendError = null;
     let waMsgId = null;
@@ -450,7 +450,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       fileName: originalname,
       msgId,
       msgStatus: sendError ? 'error' : 'sent',
-      agentName: req.agent.name,
+      agentName: req.agent.name, agentEmail: req.agent.email,
       ...(waMsgId && { waMsgId }),
       ...(replyTo && { replyTo: { role: replyTo.role, preview: replyTo.preview } }),
     });

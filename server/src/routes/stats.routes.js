@@ -141,6 +141,16 @@ router.get('/', async (req, res) => {
     for (const a of agents) agentBuckets[a.email] = { handled: 0, resolved: 0 };
     for (const dep of departments) agentBuckets[dep.id] = { handled: 0, resolved: 0 };
 
+    // "Por agente" cuenta quién RESPONDIÓ, no a quién quedó asignada: las
+    // derivaciones quedan asignadas al departamento, así que el agente que
+    // las contesta no aparecía (ej. Atención al cliente: 16 asignadas vs 229
+    // respondidas en 7 días). Mensajes viejos solo tienen agentName; los
+    // nuevos también agentEmail.
+    const repliedBuckets = { bot: { replied: 0, messages: 0, resolved: 0 } };
+    for (const a of agents) repliedBuckets[a.email] = { replied: 0, messages: 0, resolved: 0 };
+    const normName = (s) => String(s ?? '').trim().toLowerCase();
+    const agentEmailByName = new Map(agents.map(a => [normName(a.name), a.email]));
+
     const deptBuckets = {};
     for (const dep of departments) deptBuckets[dep.id] = { name: dep.name, handled: 0, resolved: 0, avgFirstResponseMin: null, _responseSamples: [] };
 
@@ -165,6 +175,25 @@ router.get('/', async (req, res) => {
     for (const conv of conversations) {
       const rawStatus = conv.status ?? 'bot';
       const status    = rawStatus === 'urgent' ? 'bot' : rawStatus; // legado: 'urgent' era status, ahora es flag
+
+      // Respuestas dentro del período: bot = role 'assistant'; agente = role
+      // 'admin' con agentEmail/agentName (difusiones, avisos de SimpliRoute y
+      // notificaciones también son 'admin' pero sin agente → no cuentan).
+      const repliedHere = new Set();
+      for (const m of conv.messages ?? []) {
+        if (!isInRange(m.timestamp, startMs, endMs)) continue;
+        let key = null;
+        if (m.role === 'assistant') key = 'bot';
+        else if (m.role === 'admin') key = m.agentEmail ?? agentEmailByName.get(normName(m.agentName)) ?? null;
+        if (!key || !repliedBuckets[key]) continue;
+        repliedBuckets[key].messages++;
+        repliedHere.add(key);
+      }
+      const closedHere = status === 'resolved' || status === 'bot_archived';
+      for (const key of repliedHere) {
+        repliedBuckets[key].replied++;
+        if (closedHere) repliedBuckets[key].resolved++;
+      }
       const channel   = conv.channel ?? 'whatsapp';
       const isClosed  = status === 'resolved' || status === 'bot_archived';
       // Una conversación cerrada casi siempre tiene assignedTo en null (las
@@ -278,14 +307,19 @@ router.get('/', async (req, res) => {
     // una persona puntual) ya se cuentan en "Por departamento" — antes acá
     // se agregaba una fila extra "{depto} (depto.)" con el mismo número,
     // que se veía como un agente fantasma duplicado.
+    // handled = conversaciones en las que respondió en el período;
+    // resolved: bot = cerradas sin agente (resolvedBy); agentes = cerradas en
+    // las que respondió (el cierre suele quedar a nombre del depto).
     const byAgent = [
-      { id: 'bot', name: 'Bot (Asistente)', ...agentBuckets['bot'] },
+      { id: 'bot', name: 'Bot (Asistente)', handled: repliedBuckets.bot.replied, messages: repliedBuckets.bot.messages, resolved: agentBuckets.bot.resolved },
       ...agents.map(a => ({
         id: a.id,
         name: a.name ?? a.email,
-        ...(agentBuckets[a.email] ?? { handled: 0, resolved: 0 }),
+        handled: repliedBuckets[a.email]?.replied ?? 0,
+        messages: repliedBuckets[a.email]?.messages ?? 0,
+        resolved: repliedBuckets[a.email]?.resolved ?? 0,
       })),
-    ];
+    ].sort((x, y) => (x.id === 'bot' ? -1 : y.id === 'bot' ? 1 : y.handled - x.handled));
 
     const byDepartment = departments
       .map(dep => ({
