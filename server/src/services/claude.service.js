@@ -2,17 +2,24 @@ import https from 'https';
 import { getDb } from './firebase.service.js';
 
 const MODEL = 'claude-sonnet-5';
-const PRICING = { inputPerMTok: 2.00, outputPerMTok: 10.00 };
+// Caché de prompt: escribir cuesta 1.25x la entrada (TTL 5 min), leer 0.1x.
+const PRICING = { inputPerMTok: 2.00, outputPerMTok: 10.00, cacheWritePerMTok: 2.50, cacheReadPerMTok: 0.20 };
 
 function logUsage(usage, type) {
-  if (!usage?.input_tokens) return;
+  if (!usage?.input_tokens && !usage?.cache_read_input_tokens) return;
+  const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+  const cacheRead = usage.cache_read_input_tokens ?? 0;
   const costUSD =
     (usage.input_tokens / 1e6) * PRICING.inputPerMTok +
+    (cacheWrite / 1e6) * PRICING.cacheWritePerMTok +
+    (cacheRead / 1e6) * PRICING.cacheReadPerMTok +
     (usage.output_tokens / 1e6) * PRICING.outputPerMTok;
   getDb().collection('bot-altorancho_usage_logs').add({
     service: 'claude',
     model: MODEL,
-    inputTokens: usage.input_tokens,
+    inputTokens: usage.input_tokens, // sólo la parte NO cacheada
+    cacheWriteTokens: cacheWrite,
+    cacheReadTokens: cacheRead,
     outputTokens: usage.output_tokens,
     costUSD: Math.round(costUSD * 1e6) / 1e6,
     type,
@@ -192,16 +199,51 @@ Nunca inventás información sobre precios, stock, pedidos, políticas, procesos
 Cuando tenés información de un pedido, la compartís directamente sin pedir verificación de identidad. El número de pedido es suficiente para dar información.
 Si el nombre del titular del pedido es distinto al nombre de la persona que te escribe, IGUAL compartís la información con normalidad — puede ser un regalo, una compra para otra persona, o simplemente puso otro nombre al comprar. Nunca niegues ni condiciones la información de un pedido a que el nombre coincida.`;
 
+  // El system va en 2 bloques para aprovechar el caché de prompt (los tokens
+  // cacheados se cobran ~10%): primero todo lo que es IGUAL para todos los
+  // clientes (personalidad, KB, reglas, etiquetas, tags) con cache_control,
+  // y después lo que cambia en cada mensaje (fecha/hora, perfil, pedido,
+  // stock, ficha). Cualquier dato variable dentro del primer bloque rompe el
+  // caché para todos — no meter ahí nada que dependa del cliente o la hora.
   let prompt = `Sos el asistente virtual de ${businessName}. Tu nombre es ${botName}.\n${personality}`;
-  prompt += buildCurrentDateInstructions();
   prompt += buildEscalationInstructions(departments);
   if (knowledgeBase) {
     prompt += `\n\n--- INFORMACIÓN DE LA TIENDA ---\n${knowledgeBase}`;
     prompt += `\n\nIMPORTANTE — USO DE LA INFORMACIÓN DE LA TIENDA: Es TU ÚNICA fuente de verdad para políticas, procesos, links y datos de la tienda. Antes de responder CUALQUIER consulta, revisá esta sección completa primero. Si algo aplica, compartilo directamente aunque el cliente no lo pida explícitamente (ej: si dice que quiere hacer un cambio, pasale el link/proceso de cambios de esta sección sin que lo pida). Si la consulta no está cubierta acá, NUNCA inventes ni supongas una respuesta — decí que no tenés esa info y ofrecé derivar a alguien del equipo.
 Los items marcados con 🔥 son promociones u ofertas vigentes que queremos impulsar activamente: mencionalas cuando el cliente hable de productos, precios, o esté evaluando una compra, aunque no pregunte por la promo puntualmente. No hace falta que el tema calce exacto — la idea es aprovechar la oportunidad de venta. Eso sí, no la repitas en cada mensaje: si ya la mencionaste en esta conversación, no la vuelvas a meter salvo que el cliente pregunte de nuevo por ella.`;
   }
-  if (customerContext) prompt += `\n\n--- PERFIL DEL CLIENTE ---\n${customerContext}`;
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes en la conversación. Si el cliente menciona una compra y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si fue de un LOCAL, las compras en local TAMBIÉN tienen número de comprobante/ticket (suele empezar con "S", ej: S08121) — pedile ese número y buscalo, exactamente igual que harías con un número de pedido web. (3) Si no tiene el número a mano o sigue sin encontrarse después de buscarlo, ahí sí pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local, y si es local pedí el número de comprobante antes de pedir el email.`;
+
+  if (availableLabels.length) {
+    prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).
+Etiquetas disponibles: ${availableLabels.join(', ')}.
+Si ninguna aplica, creá una nueva con [NEW_LABEL:nombre] (ej: [NEW_LABEL:Mayorista]).
+Guía:
+- [LABEL:Consulta] → preguntas generales sobre productos, tallas, disponibilidad.
+- [LABEL:Pedido] → consulta sobre un pedido específico.
+- [LABEL:Reclamo] → queja, problema o insatisfacción.
+- [LABEL:Devolución] → cambio, devolución o reembolso.
+Podés combinar varias etiquetas si aplica.`;
+  }
+
+  // --- Tags de CONTACTO (persisten entre conversaciones, sirven para segmentar
+  //     difusiones). A diferencia de las etiquetas de conversación, NO son
+  //     obligatorios: solo taggeás si el mensaje da una señal clara.
+  {
+    const guide = (botConfig.customerTagsGuide || '').trim();
+    const existing = (customerTags || []).filter(Boolean);
+    prompt += `\n\n--- TAGS DE CONTACTO ---
+Si en el mensaje aparece una señal CLARA sobre quién es este cliente, agregale un tag con [TAG:nombre] (invisible para el cliente). NO inventes si no hay señal — es opcional.
+Categorías: tipo de cliente (Mayorista/Minorista/Revendedor), rubro/interés (Iluminación, Deco, Muebles…), zona o sucursal (Belgrano, Nordelta, San Isidro, Alcorta…), comportamiento (Recurrente, Primera compra, Reclamó).`;
+    if (existing.length) prompt += `\nTags que ya se usan (reusá estos si aplican, respetando cómo están escritos): ${existing.join(', ')}.`;
+    prompt += `\nSi ninguno encaja y la señal es clara, creá uno con [NEW_TAG:nombre].`;
+    if (guide) prompt += `\nGuía del negocio:\n${guide}`;
+  }
+
+  // ── Bloque variable (por mensaje) ──
+  const stable = prompt;
+  prompt = buildCurrentDateInstructions().trimStart();
+  if (customerContext) prompt += `\n\n--- PERFIL DEL CLIENTE ---\n${customerContext}`;
   if (orderInfo) {
     prompt += `\n\n--- INFORMACIÓN DEL PEDIDO CONSULTADO ---\n${JSON.stringify(orderInfo, null, 2)}`;
     prompt += `\n\nEsta información se acaba de consultar en este mismo turno y es la más actualizada que existe. Si en mensajes anteriores de esta conversación dijiste que no encontrabas el pedido, ESO YA NO APLICA — ahora sí lo tenés, usalo con normalidad sin mencionar la búsqueda anterior.`;
@@ -251,33 +293,11 @@ IMPORTANTE — Local Alcorta:
     prompt += `\n\n--- FICHA DEL PRODUCTO ---\n${productInfo}`;
     prompt += `\n\nUsá esta ficha para responder preguntas sobre material, medidas, armado o cuidados del producto. Si la descripción no cubre lo que te preguntan, decilo honestamente en vez de inventar — no asumas materiales, medidas ni instrucciones que no estén acá.`;
   }
-  if (availableLabels.length) {
-    prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).
-Etiquetas disponibles: ${availableLabels.join(', ')}.
-Si ninguna aplica, creá una nueva con [NEW_LABEL:nombre] (ej: [NEW_LABEL:Mayorista]).
-Guía:
-- [LABEL:Consulta] → preguntas generales sobre productos, tallas, disponibilidad.
-- [LABEL:Pedido] → consulta sobre un pedido específico.
-- [LABEL:Reclamo] → queja, problema o insatisfacción.
-- [LABEL:Devolución] → cambio, devolución o reembolso.
-Podés combinar varias etiquetas si aplica.`;
-  }
 
-  // --- Tags de CONTACTO (persisten entre conversaciones, sirven para segmentar
-  //     difusiones). A diferencia de las etiquetas de conversación, NO son
-  //     obligatorios: solo taggeás si el mensaje da una señal clara.
-  {
-    const guide = (botConfig.customerTagsGuide || '').trim();
-    const existing = (customerTags || []).filter(Boolean);
-    prompt += `\n\n--- TAGS DE CONTACTO ---
-Si en el mensaje aparece una señal CLARA sobre quién es este cliente, agregale un tag con [TAG:nombre] (invisible para el cliente). NO inventes si no hay señal — es opcional.
-Categorías: tipo de cliente (Mayorista/Minorista/Revendedor), rubro/interés (Iluminación, Deco, Muebles…), zona o sucursal (Belgrano, Nordelta, San Isidro, Alcorta…), comportamiento (Recurrente, Primera compra, Reclamó).`;
-    if (existing.length) prompt += `\nTags que ya se usan (reusá estos si aplican, respetando cómo están escritos): ${existing.join(', ')}.`;
-    prompt += `\nSi ninguno encaja y la señal es clara, creá uno con [NEW_TAG:nombre].`;
-    if (guide) prompt += `\nGuía del negocio:\n${guide}`;
-  }
-
-  return prompt;
+  return [
+    { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: prompt },
+  ];
 }
 
 function buildMessages(conversationHistory, newMessage, imageData = null) {
