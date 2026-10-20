@@ -31,6 +31,7 @@ import { syncAllTiendaNubeCustomers } from './services/customer.service.js';
 import { refreshRecentAttributions } from './services/campaign.service.js';
 import { sendEscalationFollowups } from './services/escalation.service.js';
 import { sendPickupFollowups } from './services/notifications.service.js';
+import { sendPaymentReminders } from './services/paymentReminder.service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -54,6 +55,13 @@ cron.schedule('*/30 * * * *', () => {
 // orders still pending pickup after the initial notification
 cron.schedule('0 10 * * *', () => {
   sendPickupFollowups().catch(err => console.error('[cron] pickup followup error:', err));
+});
+
+// Recordatorio de pago por transferencia: cada 10 min revisa pedidos de
+// Pago Nube pendientes (aviso a los N min de la compra y otro al día
+// siguiente). Apagado hasta que se prenda en Notificaciones.
+cron.schedule('*/10 * * * *', () => {
+  sendPaymentReminders().catch(err => console.error('[cron] payment reminder error:', err.message));
 });
 
 // Sync masivo de contactos desde Tienda Nube, 1 vez al día (4am) — mantiene

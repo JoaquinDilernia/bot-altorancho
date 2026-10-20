@@ -24,7 +24,7 @@ function makeShortCode() {
   return crypto.randomBytes(4).toString('hex'); // 8 chars, suficiente para el volumen de una difusión
 }
 
-async function createShortLink({ targetUrl, campaignId, contactId }) {
+export async function createShortLink({ targetUrl, campaignId, contactId }) {
   const db = getDb();
   const code = makeShortCode();
   await db.collection(LINKS).doc(code).set({

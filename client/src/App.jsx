@@ -17,6 +17,7 @@ import Costs         from './pages/Costs.jsx';
 import Departments   from './pages/Departments.jsx';
 import Notifications from './pages/Notifications.jsx';
 import SimpliRouteHistory from './pages/SimpliRouteHistory.jsx';
+import PaymentReminders from './pages/PaymentReminders.jsx';
 import Users         from './pages/Users.jsx';
 import Customers     from './pages/Customers.jsx';
 import Campaigns     from './pages/Campaigns.jsx';
@@ -58,6 +59,7 @@ function AppRoutes() {
           <Route path="departments"   element={<Departments />} />
           <Route path="notifications" element={<Notifications />} />
           <Route path="simpliroute-history" element={<SimpliRouteHistory />} />
+          <Route path="payment-reminders" element={<PaymentReminders />} />
           <Route path="users"         element={<Users />} />
         </Route>
       </Routes>

@@ -229,6 +229,31 @@ export async function getOrderById(orderId) {
 }
 
 /**
+ * Pedidos con pago pendiente creados después de `since` (para el recordatorio
+ * de transferencia). Con ~35 transferencias/día, 48hs entran holgado en una
+ * página de 200. TiendaNube responde 404 "Last page is 0" si no hay ninguno.
+ * Tira error si falla (el cron no debe asumir "no hay pendientes").
+ * @param {Date} since
+ * @returns {Promise<Array>}
+ */
+export async function getPendingPaymentOrders(since) {
+  try {
+    const { data } = await client.get('/orders', {
+      params: {
+        payment_status: 'pending',
+        created_at_min: since.toISOString(),
+        per_page: 200,
+        fields: 'id,token,number,status,payment_status,payment_details,customer,total,created_at',
+      },
+    });
+    return data ?? [];
+  } catch (err) {
+    if (err.response?.status === 404) return [];
+    throw err;
+  }
+}
+
+/**
  * Busca productos por nombre o categoría.
  * @param {string} query
  * @returns {Promise<Array>}
