@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isWaiting, agentKeySet, waitingSummary, mergeById, visibleTo } from './waiting.js';
+import { isWaiting, agentKeySet, waitingSummary, mergeById, visibleTo, waitingVisibleTo } from './waiting.js';
 
 const agents = [{ id: 'ag1', email: 'ana@altorancho.com' }];
 const keys = agentKeySet(agents);
@@ -102,4 +102,18 @@ test('contador del operador: solo cuenta las esperando de su departamento', () =
   ];
   assert.equal(waitingSummary(convs.filter(c => visibleTo(c, op)), []).count, 1);
   assert.equal(waitingSummary(convs.filter(c => visibleTo(c, { role: 'admin' })), []).count, 3);
+});
+
+test('waitingVisibleTo: solo esperando y visibles para el agente', () => {
+  const convs = [
+    { id: 'a', status: 'escalated', assignedTo: 'ventas' },                       // espera, depto ventas
+    { id: 'b', status: 'escalated', assignedTo: 'logistica' },                    // espera, otro depto
+    { id: 'c', status: 'escalated', assignedTo: 'ag1' },                          // tomada por agente
+    { id: 'd', status: 'escalated', assignedTo: 'ventas', firstAgentResponseAt: '2026-10-20T10:00:00Z' }, // ya respondida
+    { id: 'e', status: 'bot', humanMode: true, assignedTo: 'ventas' },            // legado
+    { id: 'f', status: 'resolved', assignedTo: 'ventas' },                        // no espera
+  ];
+  const op = { role: 'operador', department: 'ventas', email: 'ana@x.com' };
+  assert.deepEqual(waitingVisibleTo(convs, agents, op).map(c => c.id), ['a', 'e']);
+  assert.deepEqual(waitingVisibleTo(convs, agents, { role: 'admin' }).map(c => c.id), ['a', 'b', 'e']);
 });

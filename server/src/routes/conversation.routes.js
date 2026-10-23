@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import {
   listConversations,
   listArchivedConversations,
+  listWaitingCandidates,
   getConversationById,
   searchConversations,
   getConversationHistory,
@@ -34,6 +35,7 @@ import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
 import { generateConversationSummary } from '../services/claude.service.js';
 import { toWaContactId } from '../services/phone.js';
+import { waitingVisibleTo } from '../services/waiting.js';
 import { forwardTargetsAllowed, captionFromContent, FORWARD_MAX_TARGETS, FORWARD_MAX_MESSAGES } from '../services/forward.js';
 
 const router = Router();
@@ -136,6 +138,23 @@ router.get('/search', async (req, res) => {
     }
     const conversations = await searchConversations(q);
     res.json({ conversations });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Conversaciones esperando a alguien del equipo, sin el límite de 200 del
+// listado: el panel las suma a su lista para que el chip "Esperando" y "Te
+// esperan" coincidan con el contador del menú. Misma regla (isWaiting) y
+// misma visibilidad de operador que GET /. Antes de /:contactId.
+router.get('/waiting', async (req, res) => {
+  try {
+    const [candidates, agentsSnap] = await Promise.all([
+      listWaitingCandidates(),
+      getDb().collection('bot-altorancho_agents').get(),
+    ]);
+    const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    res.json({ conversations: waitingVisibleTo(candidates, agents, req.agent) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

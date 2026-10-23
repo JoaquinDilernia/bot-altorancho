@@ -178,3 +178,24 @@ export function buildTimeline(messages, { botName, nameMap = {}, now = new Date(
   });
   return out;
 }
+
+function updatedMs(c) {
+  const ts = c?.updatedAt;
+  if (!ts) return 0;
+  const secs = ts._seconds ?? ts.seconds;
+  if (secs) return secs * 1000;
+  const t = new Date(ts).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+/**
+ * Suma al listado (las 200 más recientes) las que esperan y quedaron afuera
+ * (GET /api/conversations/waiting). Sin repetir id: gana la del listado.
+ * Orden: updatedAt desc, igual que el server.
+ */
+export function mergeWaiting(list = [], waiting = []) {
+  const ids = new Set(list.map(c => c.id));
+  const extra = waiting.filter(c => c?.id && !ids.has(c.id));
+  if (!extra.length) return list;
+  return [...list, ...extra].sort((a, b) => updatedMs(b) - updatedMs(a));
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { waitLevel, avatarColor, statusPill, AVATAR_PALETTE, resolveAssignee, pillFor, initials, listTime, buildTimeline } from './conversationView.js';
+import { waitLevel, avatarColor, statusPill, AVATAR_PALETTE, resolveAssignee, pillFor, initials, listTime, buildTimeline, mergeWaiting } from './conversationView.js';
 
 describe('waitLevel', () => {
   it('umbrales 5 y 15 minutos', () => {
@@ -207,5 +207,24 @@ describe('buildTimeline', () => {
     const tl = buildTimeline([{ role: 'admin', content: 'x' }, { role: 'assistant', content: 'y' }], {});
     expect(tl.filter(x => x.kind === 'handoff').map(x => x.text)).toEqual(['Bot volvió a responder']);
     expect(tl.some(x => x.kind === 'day')).toBe(false);
+  });
+});
+
+describe('mergeWaiting', () => {
+  const list = [
+    { id: 'a', updatedAt: '2026-10-23T12:00:00Z' },
+    { id: 'b', updatedAt: { _seconds: Date.parse('2026-10-23T11:00:00Z') / 1000 } },
+  ];
+  it('suma las que esperan fuera del listado, ordenadas por updatedAt desc', () => {
+    const old = { id: 'z', updatedAt: { _seconds: Date.parse('2026-10-22T14:00:00Z') / 1000 }, status: 'escalated' };
+    expect(mergeWaiting(list, [old]).map(c => c.id)).toEqual(['a', 'b', 'z']);
+  });
+  it('no duplica: gana la versión del listado', () => {
+    const r = mergeWaiting(list, [{ id: 'a', updatedAt: '2026-10-01T00:00:00Z', stale: true }]);
+    expect(r).toHaveLength(2);
+    expect(r[0].stale).toBeUndefined();
+  });
+  it('sin extras devuelve el mismo listado', () => {
+    expect(mergeWaiting(list, [])).toBe(list);
   });
 });

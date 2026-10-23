@@ -41,6 +41,12 @@ export function visibleTo(conv, agent) {
   return targets.includes(conv.assignedTo);
 }
 
+/** Las que esperan y el agente puede ver (operador: solo su depto/email). */
+export function waitingVisibleTo(conversations = [], agents = [], agent) {
+  const keys = agentKeySet(agents);
+  return conversations.filter(c => isWaiting(c, keys) && visibleTo(c, agent));
+}
+
 /** Une listas de conversaciones sin repetir el mismo id (la primera gana). */
 export function mergeById(...lists) {
   const byId = new Map();

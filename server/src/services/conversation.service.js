@@ -325,6 +325,22 @@ export async function getConversationById(contactId) {
   return doc.exists ? mapConversationDoc(doc, doc.data()) : null;
 }
 
+// Candidatas a "esperando" (escaladas + legado con humanMode), sin el límite de
+// 200 de listConversations: una escalada vieja tiene que aparecer igual.
+// El filtro fino (isWaiting / visibleTo) lo hace quien llama.
+export async function listWaitingCandidates() {
+  const db = getDb();
+  const [escalatedSnap, humanModeSnap] = await Promise.all([
+    db.collection(COLLECTION).where('status', '==', 'escalated').get(),
+    db.collection(COLLECTION).where('humanMode', '==', true).get(),
+  ]);
+  const byId = new Map();
+  for (const doc of [...escalatedSnap.docs, ...humanModeSnap.docs]) {
+    if (!byId.has(doc.id)) byId.set(doc.id, mapConversationDoc(doc, doc.data()));
+  }
+  return [...byId.values()];
+}
+
 export async function listArchivedConversations() {
   const db = getDb();
   const snapshot = await db.collection(COLLECTION)

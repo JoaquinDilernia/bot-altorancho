@@ -5,7 +5,7 @@ import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
 import { useBrand } from '../contexts/BrandContext';
 import BotFace from '../components/ui/BotFace';
-import { avatarColor, pillFor, initials, listTime, buildTimeline } from '../lib/conversationView';
+import { avatarColor, pillFor, initials, listTime, buildTimeline, mergeWaiting } from '../lib/conversationView';
 import styles from './Conversations.module.css';
 
 
@@ -1107,9 +1107,15 @@ export default function Conversations() {
 
   async function loadConversations() {
     try {
-      const res = await authFetch(BASE_URL + '/api/conversations');
+      // El listado trae las 200 más recientes; /waiting suma las que esperan y
+      // quedaron afuera, así "Esperando" coincide con el contador del menú.
+      const [res, waitingRes] = await Promise.all([
+        authFetch(BASE_URL + '/api/conversations'),
+        authFetch(BASE_URL + '/api/conversations/waiting').catch(() => null),
+      ]);
       const data = await res.json();
-      const list = data.conversations ?? [];
+      const waitingData = waitingRes?.ok ? await waitingRes.json() : { conversations: [] };
+      const list = mergeWaiting(data.conversations ?? [], waitingData.conversations ?? []);
       setConversations(list);
       setSelected(prev => {
         if (!prev) return prev;
