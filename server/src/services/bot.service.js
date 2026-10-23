@@ -14,6 +14,8 @@ import {
 } from './conversation.service.js';
 import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts, formatWebStock, getProductById } from './tiendanube.service.js';
 import { createCartLink } from './cart.js';
+import { withCartUtm } from './cartAttribution.js';
+import { recordBotCart } from './botCart.service.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo, findPosOrder, findPosOrdersByContact, formatPosOrder, LOCAL_STORES } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
 import {
@@ -625,7 +627,7 @@ async function processIncomingMessageInternal(msg) {
       imageData,
       departments,
       tools: BOT_TOOLS,
-      runTool: runBotTool,
+      runTool: (name, input) => runBotTool(name, input, { contactId: from }),
       isReopened: isRecent && history.length > 0,
     });
   } catch (err) {
@@ -766,7 +768,7 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
     imageData: null,
     departments,
     tools: BOT_TOOLS,
-    runTool: runBotTool,
+    runTool: (name, input) => runBotTool(name, input, { contactId: from }),
   });
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
@@ -815,6 +817,20 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
 // busca productos con el contexto de toda la charla (y obtiene sus ids) y
 // arma el carrito. El bot nunca escribe el link del carrito: pide variantes
 // y cantidades y cart.js las valida contra TiendaNube y arma el cart-link.
+// Arma el carrito, le suma las UTM del bot (Analytics / TiendaNube) y lo
+// registra para la estadística de carritos — si el registro falla, el link
+// se manda igual.
+async function buildAndRecordCart(productos, contactId) {
+  const result = await createCartLink(productos, getProductById);
+  if (result.error) return result;
+  const link = withCartUtm(result.link);
+  if (contactId) {
+    await recordBotCart({ contactId, link, items: result.items, total: result.total })
+      .catch(err => console.error('[bot] No se pudo registrar el carrito:', err.message));
+  }
+  return { link, detalle: result.detalle };
+}
+
 export const PRODUCT_SEARCH_TOOL = {
   name: 'buscar_productos',
   description: 'Busca productos en la tienda online de Alto Rancho (TiendaNube) y devuelve, por producto, su link y la disponibilidad web por variante (color/medida/etc.) con sus ids. La búsqueda matchea contra el NOMBRE del producto. No trae stock de los locales.',
@@ -854,8 +870,8 @@ export const CART_TOOL = {
 const BOT_TOOLS = [PRODUCT_SEARCH_TOOL, CART_TOOL];
 const TOOL_PRODUCT_LIMIT = 10;
 
-export async function runBotTool(name, input) {
-  if (name === 'armar_carrito') return createCartLink(input?.productos, getProductById);
+export async function runBotTool(name, input, { contactId = null } = {}) {
+  if (name === 'armar_carrito') return buildAndRecordCart(input?.productos, contactId);
   if (name !== 'buscar_productos') return { error: `Herramienta desconocida: ${name}` };
   const consulta = String(input?.consulta ?? '').trim();
   if (!consulta) return { error: 'Falta la consulta' };

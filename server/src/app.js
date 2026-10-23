@@ -32,6 +32,7 @@ import { refreshRecentAttributions } from './services/campaign.service.js';
 import { sendEscalationFollowups } from './services/escalation.service.js';
 import { sendPickupFollowups } from './services/notifications.service.js';
 import { sendPaymentReminders } from './services/paymentReminder.service.js';
+import { reconcileBotCarts } from './services/botCart.service.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -60,6 +61,12 @@ cron.schedule('0 10 * * *', () => {
 // Recordatorio de pago por transferencia: cada 10 min revisa pedidos de
 // Pago Nube pendientes (aviso a los N min de la compra y otro al día
 // siguiente). Apagado hasta que se prenda en Notificaciones.
+// Cada hora: cruza los carritos que armó el bot con los pedidos pagados de
+// TiendaNube (estadística de carritos).
+cron.schedule('20 * * * *', () => {
+  reconcileBotCarts().catch(err => console.error('[cron] carritos del bot:', err.message));
+});
+
 cron.schedule('*/10 * * * *', () => {
   sendPaymentReminders().catch(err => console.error('[cron] payment reminder error:', err.message));
 });

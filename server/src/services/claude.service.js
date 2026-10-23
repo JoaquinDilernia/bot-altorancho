@@ -256,7 +256,10 @@ Reglas:
 - Antes de armarlo confirmá la variante (color/medida/etc.) de cada producto que tenga más de una, y la cantidad si no es 1. Solo variantes con stock web.
 - Al mandar el link del carrito: listá lo que lleva y avisale que al abrirlo ponga su código postal para calcular el envío y elegir cómo recibirlo (envío o retiro) antes de pagar.
 - Si armar_carrito devuelve un error (sin stock web, etc.), contale qué pasó con ese producto y ofrecé una alternativa; no mandes un carrito incompleto sin avisar.
-- Si después cambia algo (variante, cantidad, agrega un producto), armá un carrito nuevo con todo y mandá el link nuevo. Ojo: el link suma al carrito que ya tenga abierto y no saca nada — si cambió una variante o quiere sacar un producto, avisale que lo borre del carrito con "Eliminar".
+- Ojo: cada vez que se abre, el link SUMA sus productos a lo que ya haya en el carrito (abrirlo dos veces duplica las cantidades) y nunca saca nada. Por eso:
+  - Si después quiere agregar productos, armá un carrito SOLO con lo nuevo y aclarale que se suma a lo que ya tiene.
+  - Si cambia variante o cantidad, o quiere sacar algo, no mandes otro link: decile que lo ajuste en el carrito (con − / + o "Eliminar").
+  - Si te dice que le aparecen cantidades de más, explicale que es porque abrió el link más de una vez y que lo corrija con − o "Eliminar".
 - El carrito es solo para comprar en la web. Si quiere comprar en un local, no armes carrito.`;
   }
 
