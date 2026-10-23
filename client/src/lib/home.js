@@ -89,3 +89,15 @@ export function activityFeed(conversations, { botName, areas, nameMap, agents, n
       return { key: c.id, icon: ICON_BY_TONE[tone], title, sub: relTime(c.updatedAt, now) };
     });
 }
+
+export const WEEK_REFRESH_MS = 10 * 60 * 1000;
+
+/**
+ * ¿Hay que volver a pedir /api/stats?period=week? Sí en la primera carga
+ * (nunca se trajo), en un refresco manual (force) o si pasaron 10 min.
+ * El polling de 60 s solo trae el día.
+ */
+export function shouldFetchWeek(lastFetchedMs, nowMs, { force = false } = {}) {
+  if (force || lastFetchedMs == null) return true;
+  return nowMs - lastFetchedMs >= WEEK_REFRESH_MS;
+}

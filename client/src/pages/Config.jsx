@@ -17,6 +17,7 @@ export default function Config() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => { fetchConfig(); }, []);
 
@@ -33,17 +34,25 @@ export default function Config() {
   async function handleSave(e) {
     e.preventDefault();
     setSaving(true);
+    setSaveError('');
     try {
       const brandColor = normalizeHex(config.brandColor);
       const body = { ...config, brandColor };
-      await authFetch(BASE_URL + '/api/config', {
+      const res = await authFetch(BASE_URL + '/api/config', {
         method: 'PUT',
         body,
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Error ${res.status}`);
+      }
       setConfig(body);
       updateBrand({ brandColor, botName: body.botName });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setSaved(false);
+      setSaveError(`No se pudo guardar: ${err.message}`);
     } finally {
       setSaving(false);
     }
@@ -284,6 +293,7 @@ export default function Config() {
 
         <div className={styles.formFooter}>
           {saved && <span className={styles.savedMsg}>✓ Cambios guardados</span>}
+          {saveError && <span className={styles.saveError} role="alert">{saveError}</span>}
           <button type="submit" className={styles.btnPrimary} disabled={saving}>
             {saving ? 'Guardando...' : 'Guardar configuración'}
           </button>

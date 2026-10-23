@@ -190,6 +190,12 @@
   font-weight: 500;
 }
 
+.saveError {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+  font-weight: 500;
+}
+
 .btnPrimary {
   background: var(--color-primary);
   color: white;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmt, kpiDelta, tediSummary, waitingQueue, activityFeed, relTime } from './home';
+import { fmt, kpiDelta, tediSummary, waitingQueue, activityFeed, relTime, shouldFetchWeek, WEEK_REFRESH_MS } from './home';
 
 const NOW = new Date('2026-10-20T15:00:00Z');
 const ago = (min) => new Date(NOW.getTime() - min * 60000).toISOString();
@@ -101,4 +101,13 @@ describe('relTime', () => {
     expect(relTime(ago(1500), NOW)).toBe('hace 1 d');
     expect(relTime(null, NOW)).toBe('');
   });
+});
+
+describe('shouldFetchWeek', () => {
+  const T = 1_800_000_000_000;
+  it('primera carga: sí', () => expect(shouldFetchWeek(null, T)).toBe(true));
+  it('polling antes de 10 min: no', () => expect(shouldFetchWeek(T, T + 60_000)).toBe(false));
+  it('polling a los 9:59: no', () => expect(shouldFetchWeek(T, T + WEEK_REFRESH_MS - 1000)).toBe(false));
+  it('polling a los 10 min: sí', () => expect(shouldFetchWeek(T, T + WEEK_REFRESH_MS)).toBe(true));
+  it('refresco manual: sí aunque sea reciente', () => expect(shouldFetchWeek(T, T + 1000, { force: true })).toBe(true));
 });

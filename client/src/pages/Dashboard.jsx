@@ -8,7 +8,7 @@ import Skeleton from '../components/ui/Skeleton';
 import { useCountUp } from '../hooks/useCountUp';
 import { useFirstLoad } from '../hooks/useFirstLoad';
 import { waitLevel, avatarColor, initials, pillFor } from '../lib/conversationView';
-import { tediSummary, waitingQueue, activityFeed, kpiDelta, fmt, relTime } from '../lib/home';
+import { tediSummary, waitingQueue, activityFeed, kpiDelta, fmt, relTime, shouldFetchWeek } from '../lib/home';
 import styles from './Dashboard.module.css';
 
 const TYPING_MS = 800;
@@ -78,20 +78,24 @@ export default function Dashboard() {
   const firstLoad = useFirstLoad(loading);
 
   const loadingRef = useRef(false);
-  const load = useCallback(async () => {
+  const weekFetchedAtRef = useRef(null);
+  // force = refresco manual (botón): trae también la semana aunque sea reciente.
+  // El polling de 60 s solo pide el día; la semana, como mucho cada 10 min.
+  const load = useCallback(async ({ force = false } = {}) => {
     if (loadingRef.current) return; // no superponer cargas (botón + polling)
     loadingRef.current = true;
     setRefreshing(true);
     try {
+      const withWeek = shouldFetchWeek(weekFetchedAtRef.current, Date.now(), { force });
       const [dayRes, weekRes, convsRes, areasRes, usersRes] = await Promise.all([
         authFetch(BASE_URL + '/api/stats?period=day'),
-        authFetch(BASE_URL + '/api/stats?period=week'),
+        withWeek ? authFetch(BASE_URL + '/api/stats?period=week') : null,
         authFetch(BASE_URL + '/api/conversations'),
         authFetch(BASE_URL + '/api/departments').catch(() => null),
         authFetch(BASE_URL + '/api/auth/users').catch(() => null),
       ]);
-      if (!dayRes.ok || !weekRes.ok || !convsRes.ok) throw new Error('No se pudo cargar el resumen');
-      const [dayData, weekData, convsData] = await Promise.all([dayRes.json(), weekRes.json(), convsRes.json()]);
+      if (!dayRes.ok || (weekRes && !weekRes.ok) || !convsRes.ok) throw new Error('No se pudo cargar el resumen');
+      const [dayData, weekData, convsData] = await Promise.all([dayRes.json(), weekRes?.json() ?? null, convsRes.json()]);
       const deptsData = areasRes?.ok ? await areasRes.json() : { departments: [] };
       const users = usersRes?.ok ? await usersRes.json() : [];
       const loadedAreas = deptsData.departments ?? []; // en Alto las "áreas" son los departamentos
@@ -102,7 +106,10 @@ export default function Dashboard() {
       setAgents(Array.isArray(users) ? users : []);
       setNameMap(map);
       setStats(dayData);
-      setWeek(weekData);
+      if (weekData) {
+        setWeek(weekData);
+        weekFetchedAtRef.current = Date.now();
+      }
       setConvs(convsData.conversations ?? []);
       setError(false);
     } catch {
@@ -181,7 +188,7 @@ export default function Dashboard() {
           <h1 className={styles.hello}>{greeting()}, {agent?.name?.split(' ')[0]} 👋</h1>
           <p className={styles.sub}><span className={styles.live} />{todayLabel()} · en vivo</p>
         </div>
-        <button className={`${styles.refreshBtn} ${refreshing ? styles.spinning : ''}`} onClick={load} title="Actualizar" aria-label="Actualizar">
+        <button className={`${styles.refreshBtn} ${refreshing ? styles.spinning : ''}`} onClick={() => load({ force: true })} title="Actualizar" aria-label="Actualizar">
           <IconRefresh />
         </button>
       </header>
