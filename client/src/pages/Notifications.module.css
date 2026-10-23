@@ -39,7 +39,6 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xs);
   flex-shrink: 0;
 }
 
@@ -84,11 +83,9 @@
 }
 
 .filterLabel {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .checkRow {
@@ -156,7 +153,6 @@
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-xs);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -234,11 +230,9 @@
 .table th {
   padding: var(--space-2) var(--space-3);
   text-align: left;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
   background: var(--color-surface);
@@ -378,11 +372,9 @@
 }
 
 .previewLabel {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
   margin-bottom: var(--space-1);
 }
 

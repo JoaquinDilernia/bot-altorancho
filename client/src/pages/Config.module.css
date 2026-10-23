@@ -33,7 +33,6 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
-  box-shadow: var(--shadow-xs);
 }
 
 .sectionHead {
@@ -55,11 +54,9 @@
 .field { display: flex; flex-direction: column; gap: var(--space-1); }
 
 .label {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 .input, .textarea {
@@ -107,7 +104,6 @@
   top: 3px;
   left: 3px;
   transition: transform var(--transition-base);
-  box-shadow: var(--shadow-xs);
 }
 .toggleSwitchOn .toggleThumb { transform: translateX(18px); }
 

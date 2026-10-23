@@ -139,7 +139,6 @@
   border-radius: 50%;
   background: #fff;
   transition: transform var(--transition-base);
-  box-shadow: var(--shadow-xs);
 }
 .toggleOn .toggleThumb { transform: translateX(18px); }
 
