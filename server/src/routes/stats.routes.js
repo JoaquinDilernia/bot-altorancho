@@ -4,7 +4,7 @@ import { getDb } from '../services/firebase.service.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { getBotCartStats, reconcileBotCarts } from '../services/botCart.service.js';
 import { aggregateConversations, arMidnight, fromArWallClock, toDate, isoDate, previousRange, previousTotals } from '../services/statsAggregate.js';
-import { waitingSummary } from '../services/waiting.js';
+import { waitingSummary, mergeById } from '../services/waiting.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -57,13 +57,15 @@ router.get('/', async (req, res) => {
       .where('updatedAt', '<=', admin.firestore.Timestamp.fromMillis(toMs))
       .get();
 
-    const [snap, prevSnap, agentsSnap, deptsSnap, urgentSnap, awaitingSnap, configDoc] = await Promise.all([
+    const [snap, prevSnap, agentsSnap, deptsSnap, urgentSnap, awaitingSnap, humanModeSnap, configDoc] = await Promise.all([
       convsInRange(startMs, endMs),
       convsInRange(prevStartMs, prevEndMs),
       db.collection('bot-altorancho_agents').get(),
       db.collection('bot-altorancho_departments').get(),
       db.collection('bot-altorancho_conversations').where('urgent', '==', true).get(),
       db.collection('bot-altorancho_conversations').where('status', '==', 'escalated').get(),
+      // Legado: status 'bot'/'urgent' con humanMode también espera (isWaiting filtra).
+      db.collection('bot-altorancho_conversations').where('humanMode', '==', true).get(),
       db.collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
     ]);
 
@@ -85,7 +87,10 @@ router.get('/', async (req, res) => {
     // guardia) sigue contando como backlog. Regla única (waiting.js): escalada,
     // no tomada por un agente y sin respuesta del equipo en este ciclo.
     const { count: awaitingAgent, oldestMin: oldestAwaitingMin } =
-      waitingSummary(awaitingSnap.docs.map(d => d.data()), agents);
+      waitingSummary(mergeById(
+        awaitingSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+        humanModeSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+      ), agents);
 
     const current = aggregateConversations(conversations, { startMs, endMs, agents, departments, botConfig });
     const prev = aggregateConversations(prevConversations, { startMs: prevStartMs, endMs: prevEndMs, agents, departments, botConfig });

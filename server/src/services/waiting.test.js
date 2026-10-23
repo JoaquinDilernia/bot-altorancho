@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isWaiting, agentKeySet, waitingSummary } from './waiting.js';
+import { isWaiting, agentKeySet, waitingSummary, mergeById } from './waiting.js';
 
 const agents = [{ id: 'ag1', email: 'ana@altorancho.com' }];
 const keys = agentKeySet(agents);
@@ -60,4 +60,19 @@ test("legado: status 'urgent' se trata como 'bot' (espera solo con humanMode)", 
 
 test('flag urgent no cambia la regla: tomada por un agente no espera', () => {
   assert.equal(isWaiting({ status: 'escalated', urgent: true, assignedTo: 'a1' }, new Set(['a1'])), false);
+});
+
+test('escaladas + humanMode unidas sin duplicar: el legado bot/urgent con humanMode cuenta', () => {
+  const now = new Date('2026-10-21T13:00:00Z');
+  const escalated = [
+    { id: 'e1', status: 'escalated', humanMode: true, escalatedAt: new Date('2026-10-21T12:50:00Z') }, // 10 min
+  ];
+  const humanMode = [
+    { id: 'e1', status: 'escalated', humanMode: true, escalatedAt: new Date('2026-10-21T12:50:00Z') }, // repetida
+    { id: 'l1', status: 'bot', humanMode: true, waitingSince: new Date('2026-10-21T12:20:00Z') },   // legado, 40 min
+    { id: 'l2', status: 'urgent', humanMode: true, assignedTo: 'ag1' },                              // tomada: no
+  ];
+  const merged = mergeById(escalated, humanMode);
+  assert.deepEqual(merged.map(c => c.id), ['e1', 'l1', 'l2']);
+  assert.deepEqual(waitingSummary(merged, agents, now), { count: 2, oldestMin: 40 });
 });

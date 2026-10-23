@@ -29,6 +29,13 @@ export function isWaiting(conv, agentKeys = new Set()) {
   return true;
 }
 
+/** Une listas de conversaciones sin repetir el mismo id (la primera gana). */
+export function mergeById(...lists) {
+  const byId = new Map();
+  for (const list of lists) for (const c of list ?? []) if (c?.id && !byId.has(c.id)) byId.set(c.id, c);
+  return [...byId.values()];
+}
+
 /** Cuántas esperan y hace cuántos minutos (enteros) espera la más vieja. */
 export function waitingSummary(conversations = [], agents = [], now = new Date()) {
   const keys = agentKeySet(agents);
