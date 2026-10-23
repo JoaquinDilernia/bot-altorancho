@@ -160,21 +160,52 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, departments = [] } = context;
+  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, departments = [], tools = [], runTool = null } = context;
 
-  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, departments, customerTags);
+  const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, departments, customerTags, tools.length > 0);
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
-  const response = await callAnthropicAPI({
-    model: MODEL,
-    max_tokens: 1024,
-    system: systemContent,
-    messages,
-  });
+  // Loop de tool-use (mismo patrón que ENTRENO/Selvaggio): mientras Claude
+  // pida tools, se ejecutan y se le devuelven los resultados. El turno del
+  // asistente se reenvía con su `content` COMPLETO y todos los tool_result
+  // van juntos en un único mensaje de usuario.
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const response = await callAnthropicAPI({
+      model: MODEL,
+      max_tokens: 1024,
+      system: systemContent,
+      messages,
+      ...(tools.length && { tools }),
+    });
+    logUsage(response.usage, round === 0 ? 'bot_reply' : 'bot_reply_tool');
 
-  logUsage(response.usage, 'bot_reply');
-  return extractText(response);
+    if (response.stop_reason !== 'tool_use' || !runTool) return extractText(response);
+
+    const calls = response.content.filter(b => b.type === 'tool_use');
+    const results = await Promise.all(calls.map(async (call) => {
+      let output;
+      try {
+        output = await runTool(call.name, call.input ?? {});
+      } catch (err) {
+        output = { error: err.message };
+      }
+      console.log(`[claude] tool ${call.name}`, JSON.stringify(call.input), '→', JSON.stringify(output).slice(0, 300));
+      return {
+        type: 'tool_result',
+        tool_use_id: call.id,
+        content: JSON.stringify(output),
+        ...(output?.error && { is_error: true }),
+      };
+    }));
+    messages.push({ role: 'assistant', content: response.content });
+    messages.push({ role: 'user', content: results });
+  }
+
+  console.warn('[claude] Se alcanzó el máximo de rondas de tools sin respuesta final');
+  return 'Perdón, se me complicó revisar eso. ¿Me lo repetís o preferís que te pase con alguien del equipo?';
 }
+
+const MAX_TOOL_ROUNDS = 4;
 
 // Sin la fecha, el modelo no sabe qué día es: un aviso de la KB como "el
 // lunes 28/9 los locales están cerrados" no lo puede cruzar con un "¿hoy
@@ -187,7 +218,7 @@ function buildCurrentDateInstructions() {
   return `\n\n--- FECHA Y HORA ACTUAL ---\nHoy es ${fecha}, son las ${hora} (hora de Argentina). Usá esto para interpretar "hoy", "mañana", "el finde", etc. — nunca supongas otro día. Si la información de la tienda tiene un aviso con fecha (feriados, cierres, horarios especiales) que cae hoy o en el día que menciona el cliente, avisalo SIEMPRE cuando el cliente hable de ir, pasar o retirar en un local, o pregunte si están abiertos — antes de pasarle los horarios habituales.`;
 }
 
-function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], departments = [], customerTags = []) {
+function buildSystemPrompt(botConfig = {}, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels = [], departments = [], customerTags = [], hasProductTools = false) {
   const botName = botConfig.botName || 'Asistente';
   const businessName = botConfig.businessName || 'Alto Rancho';
   const personality = botConfig.botPersonality ||
@@ -213,6 +244,21 @@ Si el nombre del titular del pedido es distinto al nombre de la persona que te e
 Los items marcados con 🔥 son promociones u ofertas vigentes que queremos impulsar activamente: mencionalas cuando el cliente hable de productos, precios, o esté evaluando una compra, aunque no pregunte por la promo puntualmente. No hace falta que el tema calce exacto — la idea es aprovechar la oportunidad de venta. Eso sí, no la repitas en cada mensaje: si ya la mencionaste en esta conversación, no la vuelvas a meter salvo que el cliente pregunte de nuevo por ella.`;
   }
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes en la conversación. Si el cliente menciona una compra y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si fue de un LOCAL, las compras en local TAMBIÉN tienen número de comprobante/ticket (suele empezar con "S", ej: S08121) — pedile ese número y buscalo, exactamente igual que harías con un número de pedido web. (3) Si no tiene el número a mano o sigue sin encontrarse después de buscarlo, ahí sí pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local, y si es local pedí el número de comprobante antes de pedir el email.`;
+  if (hasProductTools) {
+    prompt += `\n\n--- LINKS DE PRODUCTOS Y CARRITO (tienda online) ---
+Tenés dos herramientas:
+- buscar_productos: busca en la tienda online por nombre y devuelve el link de cada producto y la disponibilidad web por variante, con sus ids. Usala cuando necesites el link o los ids de un producto que no esté en la sección de stock (esa sección se arma solo con el último mensaje). Armá la consulta con el contexto de toda la charla y corregí typos obvios.
+- armar_carrito: arma UN link al carrito de la web con los productos ya cargados.
+Reglas:
+- Cuando recomendás o informás un producto puntual, pasá su "Link:" tal cual (nunca lo inventes ni lo armes vos). Si son varios, un link por producto.
+- [producto_id …] y [variante_id …] son de uso interno: nunca se los muestres al cliente.
+- Si el cliente quiere comprar online, pide "el link para comprar", o eligió varios productos y está de acuerdo, usá armar_carrito con TODOS juntos y mandale ese único link.
+- Antes de armarlo confirmá la variante (color/medida/etc.) de cada producto que tenga más de una, y la cantidad si no es 1. Solo variantes con stock web.
+- Al mandar el link del carrito: listá lo que lleva y avisale que al abrirlo ponga su código postal para calcular el envío y elegir cómo recibirlo (envío o retiro) antes de pagar.
+- Si armar_carrito devuelve un error (sin stock web, etc.), contale qué pasó con ese producto y ofrecé una alternativa; no mandes un carrito incompleto sin avisar.
+- Si después cambia algo (variante, cantidad, agrega un producto), armá un carrito nuevo con todo y mandá el link nuevo. Ojo: el link suma al carrito que ya tenga abierto y no saca nada — si cambió una variante o quiere sacar un producto, avisale que lo borre del carrito con "Eliminar".
+- El carrito es solo para comprar en la web. Si quiere comprar en un local, no armes carrito.`;
+  }
 
   if (availableLabels.length) {
     prompt += `\n\n--- ETIQUETAS ---\nDEBÉS etiquetar SIEMPRE esta conversación con al menos 1 etiqueta usando [LABEL:nombre] en tu respuesta (invisible para el cliente).

@@ -12,7 +12,8 @@ import {
   addLabelToConversation,
   setMenuState,
 } from './conversation.service.js';
-import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts, formatWebStock } from './tiendanube.service.js';
+import { findOrder, findOrdersByEmail, getOrderById as getTNOrderById, formatOrderStatus, searchProducts, formatWebStock, getProductById } from './tiendanube.service.js';
+import { createCartLink } from './cart.js';
 import { findOdooOrder, findOdooOrdersByContact, findOdooOrdersByName, formatOdooOrder, getStockBySku, formatStockInfo, findPosOrder, findPosOrdersByContact, formatPosOrder, LOCAL_STORES } from './odoo.service.js';
 import { sendWhatsAppMessage, sendInstagramMessage, downloadMediaAsBase64, sendWhatsAppInteractiveList, sendWhatsAppInteractiveButtons } from './meta.service.js';
 import {
@@ -623,6 +624,8 @@ async function processIncomingMessageInternal(msg) {
       botConfig,
       imageData,
       departments,
+      tools: BOT_TOOLS,
+      runTool: runBotTool,
       isReopened: isRecent && history.length > 0,
     });
   } catch (err) {
@@ -762,6 +765,8 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
     botConfig,
     imageData: null,
     departments,
+    tools: BOT_TOOLS,
+    runTool: runBotTool,
   });
 
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
@@ -804,6 +809,67 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
   }
 
   return { skipped: false, sent, shouldEscalate, shouldClose, replyPreview: cleanText.slice(0, 80) };
+}
+
+// resolveStockContext solo ve el último mensaje; con estas tools el bot
+// busca productos con el contexto de toda la charla (y obtiene sus ids) y
+// arma el carrito. El bot nunca escribe el link del carrito: pide variantes
+// y cantidades y cart.js las valida contra TiendaNube y arma el cart-link.
+export const PRODUCT_SEARCH_TOOL = {
+  name: 'buscar_productos',
+  description: 'Busca productos en la tienda online de Alto Rancho (TiendaNube) y devuelve, por producto, su link y la disponibilidad web por variante (color/medida/etc.) con sus ids. La búsqueda matchea contra el NOMBRE del producto. No trae stock de los locales.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      consulta: { type: 'string', description: 'Palabras clave del nombre del producto, ej: "canasto suecia" o "silla singapur"' },
+    },
+    required: ['consulta'],
+  },
+};
+
+export const CART_TOOL = {
+  name: 'armar_carrito',
+  description: 'Arma un link al carrito de la tienda online con los productos ya cargados, para que el cliente solo tenga que calcular el envío y pagar. Usá producto_id y variante_id exactamente como aparecen en buscar_productos (o en la sección de stock web). Si algún producto no existe o no tiene stock web, no arma nada y te dice por qué.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      productos: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            producto_id: { type: 'integer' },
+            variante_id: { type: 'integer', description: 'La variante elegida (color/medida)' },
+            cantidad: { type: 'integer', minimum: 1 },
+          },
+          required: ['producto_id', 'variante_id', 'cantidad'],
+        },
+      },
+    },
+    required: ['productos'],
+  },
+};
+
+const BOT_TOOLS = [PRODUCT_SEARCH_TOOL, CART_TOOL];
+const TOOL_PRODUCT_LIMIT = 10;
+
+export async function runBotTool(name, input) {
+  if (name === 'armar_carrito') return createCartLink(input?.productos, getProductById);
+  if (name !== 'buscar_productos') return { error: `Herramienta desconocida: ${name}` };
+  const consulta = String(input?.consulta ?? '').trim();
+  if (!consulta) return { error: 'Falta la consulta' };
+
+  const products = await searchProducts(consulta);
+  if (!products.length) return { resultado: `No se encontraron productos para "${consulta}".` };
+  const nameOf = p => (typeof p.name === 'string' ? p.name : (p.name?.es ?? p.name?.en ?? Object.values(p.name ?? {})[0] ?? 'Producto'));
+  const blocks = products.slice(0, TOOL_PRODUCT_LIMIT)
+    .map(p => { const web = formatWebStock(p); return web ? `Producto: ${nameOf(p)}\n${web}` : null; })
+    .filter(Boolean);
+  const more = products.length > TOOL_PRODUCT_LIMIT
+    ? `\n\n(Hay ${products.length - TOOL_PRODUCT_LIMIT} producto(s) más; si busca algo puntual, pedile que lo precise.)`
+    : '';
+  return { resultado: `Se encontraron ${products.length} producto(s):\n\n${blocks.join('\n\n')}${more}` };
 }
 
 async function resolveStockContext(text) {

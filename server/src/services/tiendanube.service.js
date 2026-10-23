@@ -268,12 +268,31 @@ export async function searchProducts(query) {
     // nombre, no solo las de ficha técnica — afectaba también al lookup de
     // stock por nombre en resolveStockContext.
     const { data } = await client.get('/products', {
-      params: { q: query, published: true, fields: 'id,name,description,images,variants' },
+      params: { q: query, published: true, fields: PRODUCT_FIELDS },
     });
     return data ?? [];
   } catch (err) {
     console.error('[tiendanube] Error buscando productos:', err.message);
     return [];
+  }
+}
+
+// canonical_url = link público del producto (lo manda el bot); published
+// lo necesita la validación del carrito (cart.js).
+const PRODUCT_FIELDS = 'id,name,description,images,variants,canonical_url,published';
+
+/**
+ * Producto puntual por id (para validar el carrito armado por el bot).
+ * @param {number} productId
+ * @returns {Promise<object|null>} null si no existe
+ */
+export async function getProductById(productId) {
+  try {
+    const { data } = await client.get(`/products/${productId}`, { params: { fields: PRODUCT_FIELDS } });
+    return data ?? null;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    throw err;
   }
 }
 
@@ -477,7 +496,9 @@ export function formatWebStock(product) {
     else if (v.stock <= 0) availability = 'Sin stock';
     else if (v.stock < 3) availability = 'Quedan pocos';
     else availability = 'Disponible';
-    return `- ${label}: ${availability}`;
+    // variante_id es para armar_carrito — uso interno, no se le muestra al cliente.
+    return `- ${label}: ${availability} [variante_id ${v.id}]`;
   });
-  return `Disponibilidad en la tienda online (web):\n${lines.join('\n')}`;
+  const link = product.canonical_url ? `\nLink: ${product.canonical_url}` : '';
+  return `Disponibilidad en la tienda online (web) [producto_id ${product.id}]:${link}\n${lines.join('\n')}`;
 }
