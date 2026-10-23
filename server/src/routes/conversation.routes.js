@@ -34,6 +34,7 @@ import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
 import { generateConversationSummary } from '../services/claude.service.js';
 import { toWaContactId } from '../services/phone.js';
+import { forwardTargetsAllowed, captionFromContent, FORWARD_MAX_TARGETS, FORWARD_MAX_MESSAGES } from '../services/forward.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 16 * 1024 * 1024 } });
@@ -509,6 +510,121 @@ router.post('/:contactId/summary', async (req, res) => {
     const summary = { text, generatedAt: new Date(), metrics };
     await db.collection('bot-altorancho_conversations').doc(contactId).update({ aiSummary: summary });
     res.json({ summary });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Reenviar mensajes (como "Reenviar" de WhatsApp) ----
+// body: { messages: [{ content, mediaType, mediaId, fileName, mimeType }], targets: [contactId] }
+// El origen puede ser WhatsApp o Instagram; los destinos solo WhatsApp con la
+// ventana de 24 h abierta (forwardTargetsAllowed). Se reenvía el contenido que
+// manda el panel (el agente ya puede escribir cualquier texto con /reply). Los
+// archivos se bajan de Meta y se vuelven a subir: los mediaId de mensajes
+// ENTRANTES no se pueden reusar para enviar.
+const OUT_OF_WINDOW_MSG = 'Fuera de la ventana de 24 hs — hay que mandarle una plantilla primero';
+const FORWARD_REJECT_MSG = {
+  too_many: `Se puede reenviar a ${FORWARD_MAX_TARGETS} conversaciones como máximo`,
+  not_found: 'Conversación no encontrada',
+  instagram: 'Por Instagram no se puede reenviar — solo a conversaciones de WhatsApp',
+  channel: 'Solo se puede reenviar a conversaciones de WhatsApp',
+  window_closed: OUT_OF_WINDOW_MSG,
+};
+
+function forwardMediaLabel(mediaType, fileName) {
+  return mediaType === 'audio' ? '[Audio enviado]'
+    : mediaType === 'video' ? '[Video enviado]'
+    : mediaType === 'image' ? '[Imagen enviada]'
+    : `[Archivo: ${fileName ?? 'archivo'}]`;
+}
+
+router.post('/forward', async (req, res) => {
+  try {
+    const messages = Array.isArray(req.body.messages) ? req.body.messages.slice(0, FORWARD_MAX_MESSAGES) : [];
+    const targets = [...new Set(Array.isArray(req.body.targets) ? req.body.targets.filter(t => typeof t === 'string' && t) : [])];
+    if (!messages.length || !targets.length) return res.status(400).json({ error: 'Elegí al menos un mensaje y un destinatario' });
+
+    const db = getDb();
+    const docs = await Promise.all(targets.slice(0, FORWARD_MAX_TARGETS)
+      .map(id => db.collection('bot-altorancho_conversations').doc(id).get()));
+    const convsById = new Map(docs.filter(d => d.exists).map(d => [d.id, d.data()]));
+    const { allowed, rejected } = forwardTargetsAllowed(targets, convsById, new Date());
+
+    const results = rejected.map(({ id, reason }) => ({
+      contactId: id, name: convsById.get(id)?.contactName || id, ok: false, error: FORWARD_REJECT_MSG[reason] ?? reason,
+    }));
+
+    // Bajar y subir cada archivo a Meta una sola vez aunque vaya a varios
+    // destinatarios (el id subido se puede reusar para varios envíos).
+    const uploadCache = new Map();
+    function uploadOnce(m) {
+      if (!uploadCache.has(m.mediaId)) {
+        uploadCache.set(m.mediaId, (async () => {
+          const { buffer, mimeType } = await downloadMetaMedia(m.mediaId);
+          const mimetype = m.mimeType ?? mimeType;
+          const { buffer: upBuffer, mimeType: upMime } = m.mediaType === 'image'
+            ? await ensureWhatsAppImageSize(buffer, mimetype)
+            : { buffer, mimeType: mimetype };
+          const ext = upMime.split('/')[1]?.split(';')[0] ?? 'bin';
+          const fileName = m.fileName ?? `${m.mediaType ?? 'archivo'}.${ext}`;
+          const mediaId = await uploadMetaMedia(upBuffer, upMime);
+          return { mediaId, mimeType: upMime, fileName };
+        })());
+      }
+      return uploadCache.get(m.mediaId);
+    }
+
+    const agentFields = { agentName: req.agent.name, agentEmail: req.agent.email, forwarded: true };
+
+    for (const contactId of allowed) {
+      const { status, contactName } = convsById.get(contactId);
+      const name = contactName || contactId;
+      let sentCount = 0;
+      let firstError = null;
+
+      for (const m of messages) {
+        const hasMedia = !!m.mediaType && m.mediaType !== 'text';
+        const text = hasMedia ? captionFromContent(m.content) : String(m.content ?? '').trim();
+        try {
+          if (hasMedia && m.mediaId) {
+            const file = await uploadOnce(m);
+            const waMsgId = file.mediaId ? await sendWhatsAppMedia(contactId, file.mediaId, file.mimeType, file.fileName) : null;
+            await appendMessage(contactId, {
+              role: 'admin', content: forwardMediaLabel(m.mediaType, file.fileName), mediaType: m.mediaType,
+              mediaId: file.mediaId ?? null, fileName: file.fileName, msgId: crypto.randomUUID(), msgStatus: 'sent',
+              ...agentFields, ...(waMsgId && { waMsgId }),
+            });
+            sentCount++;
+          } else if (hasMedia && !text) {
+            // Adjunto sin mediaId (ej. imagen entrante de Instagram): no hay archivo que reenviar.
+            throw Object.assign(new Error('Este adjunto no se puede reenviar'), { userMessage: true });
+          }
+          // El texto (o el pie del adjunto) va como mensaje aparte.
+          if (text) {
+            const waMsgId = await sendWhatsAppMessage(contactId, text);
+            await appendMessage(contactId, {
+              role: 'admin', content: text, msgId: crypto.randomUUID(), msgStatus: 'sent',
+              ...agentFields, ...(waMsgId && { waMsgId }),
+            });
+            sentCount++;
+          }
+        } catch (err) {
+          const msg = err.userMessage ? err.message
+            : isWindowExpiredError(err) ? OUT_OF_WINDOW_MSG
+            : (err.response?.data?.error?.message ?? err.message);
+          console.error(`[forward] Error reenviando a ${contactId}:`, msg);
+          firstError ??= msg;
+        }
+      }
+
+      // Mismo criterio que /reply: escribirle a una archivada la reabre.
+      if (sentCount > 0 && (status === 'resolved' || status === 'bot_archived')) {
+        await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+      }
+      results.push({ contactId, name, ok: !firstError, sent: sentCount, ...(firstError && { error: firstError }) });
+    }
+
+    res.json({ results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -8,13 +8,13 @@ import webhookRoutes from './routes/webhook.routes.js';
 import simpliRouteRoutes from './routes/simpliroute.routes.js';
 import knowledgeRoutes from './routes/knowledge.routes.js';
 import conversationRoutes from './routes/conversation.routes.js';
-import configRoutes from './routes/config.routes.js';
+import configRoutes, { brandRouter } from './routes/config.routes.js';
 import tiendaNubeRoutes from './routes/tiendanube.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import testRoutes from './routes/test.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import labelRoutes from './routes/label.routes.js';
-import statsRoutes from './routes/stats.routes.js';
+import statsRoutes, { waitingRouter } from './routes/stats.routes.js';
 import quickReplyRoutes from './routes/quickreply.routes.js';
 import templateRoutes from './routes/template.routes.js';
 import costsRoutes from './routes/costs.routes.js';
@@ -115,8 +115,14 @@ app.use('/r', redirectRoutes);
 app.use('/api/conversations', requireAuth, conversationRoutes);
 app.use('/api/labels', requireAuth, labelRoutes);
 
+// Livianos y sin datos sensibles: los usa el panel de cualquier rol (operadores
+// incluidos) para el nombre/color de marca y el contador de "esperando".
+// Van antes de /api/config y /api/stats (este último exige atencion_cliente).
+app.use('/api/config/brand',  requireAuth, brandRouter);
+app.use('/api/stats/waiting', requireAuth, waitingRouter);
+
 // Requires at least atencion_cliente
-app.use('/api/knowledge',     requireAuth, requireAtLeastAtencionCliente, knowledgeRoutes);
+app.use('/api/knowledge',    requireAuth, requireAtLeastAtencionCliente, knowledgeRoutes);
 // Los operadores necesitan leer la config (ej: seguimiento de retiro en
 // Notificaciones) — la restricción de escritura vive dentro del router.
 app.use('/api/config',        requireAuth, configRoutes);

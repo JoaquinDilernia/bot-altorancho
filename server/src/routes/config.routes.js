@@ -16,14 +16,39 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Color de marca del panel: hex de 6 dígitos (o null para volver al default).
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
 router.put('/', requireAtLeastAtencionCliente, async (req, res) => {
   try {
+    if ('brandColor' in (req.body ?? {}) && req.body.brandColor !== null && !HEX_COLOR_RE.test(req.body.brandColor)) {
+      return res.status(400).json({ error: 'brandColor tiene que ser un color hex tipo #343535' });
+    }
     const db = getDb();
     await db.collection('bot-altorancho_config').doc(CONFIG_DOC).set(
       { ...req.body, updatedAt: new Date() },
       { merge: true }
     );
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Solo lo necesario para pintar el panel con la marca (sin el resto de la
+// config). Lo usa cualquier rol, operadores incluidos.
+const BRAND_DEFAULTS = { botName: 'Alto', brandColor: '#343535', businessName: 'Alto Rancho' };
+
+export const brandRouter = Router();
+brandRouter.get('/', async (req, res) => {
+  try {
+    const doc = await getDb().collection('bot-altorancho_config').doc(CONFIG_DOC).get();
+    const c = doc.exists ? doc.data() : {};
+    res.json({
+      botName: c.botName || BRAND_DEFAULTS.botName,
+      brandColor: HEX_COLOR_RE.test(c.brandColor ?? '') ? c.brandColor : BRAND_DEFAULTS.brandColor,
+      businessName: c.businessName || BRAND_DEFAULTS.businessName,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

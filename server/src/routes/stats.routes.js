@@ -9,6 +9,20 @@ import { waitingSummary, mergeById } from '../services/waiting.js';
 const router = Router();
 router.use(requireAuth);
 
+// Candidatas a "esperando": escaladas + legado 'bot'/'urgent' con humanMode
+// (isWaiting filtra). La usan /api/stats y /api/stats/waiting, así el
+// contador del menú es siempre igual a awaitingAgent.
+async function fetchWaitingCandidates(db) {
+  const [escalatedSnap, humanModeSnap] = await Promise.all([
+    db.collection('bot-altorancho_conversations').where('status', '==', 'escalated').get(),
+    db.collection('bot-altorancho_conversations').where('humanMode', '==', true).get(),
+  ]);
+  return mergeById(
+    escalatedSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    humanModeSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+  );
+}
+
 const MAX_CUSTOM_DAYS = 92; // ~3 meses, evita tablas/queries desmedidas
 
 // Los días se calculan siempre en hora Argentina (ver statsAggregate.js).
@@ -57,15 +71,13 @@ router.get('/', async (req, res) => {
       .where('updatedAt', '<=', admin.firestore.Timestamp.fromMillis(toMs))
       .get();
 
-    const [snap, prevSnap, agentsSnap, deptsSnap, urgentSnap, awaitingSnap, humanModeSnap, configDoc] = await Promise.all([
+    const [snap, prevSnap, agentsSnap, deptsSnap, urgentSnap, waitingCandidates, configDoc] = await Promise.all([
       convsInRange(startMs, endMs),
       convsInRange(prevStartMs, prevEndMs),
       db.collection('bot-altorancho_agents').get(),
       db.collection('bot-altorancho_departments').get(),
       db.collection('bot-altorancho_conversations').where('urgent', '==', true).get(),
-      db.collection('bot-altorancho_conversations').where('status', '==', 'escalated').get(),
-      // Legado: status 'bot'/'urgent' con humanMode también espera (isWaiting filtra).
-      db.collection('bot-altorancho_conversations').where('humanMode', '==', true).get(),
+      fetchWaitingCandidates(db),
       db.collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
     ]);
 
@@ -87,10 +99,7 @@ router.get('/', async (req, res) => {
     // guardia) sigue contando como backlog. Regla única (waiting.js): escalada,
     // no tomada por un agente y sin respuesta del equipo en este ciclo.
     const { count: awaitingAgent, oldestMin: oldestAwaitingMin } =
-      waitingSummary(mergeById(
-        awaitingSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-        humanModeSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-      ), agents);
+      waitingSummary(waitingCandidates, agents);
 
     const current = aggregateConversations(conversations, { startMs, endMs, agents, departments, botConfig });
     const prev = aggregateConversations(prevConversations, { startMs: prevStartMs, endMs: prevEndMs, agents, departments, botConfig });
@@ -172,6 +181,25 @@ router.get('/carts', async (req, res) => {
     res.json(await getBotCartStats(start, end));
   } catch (err) {
     console.error('[stats] carritos:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Contador liviano de "esperando" (badge del menú, Inicio). Se monta aparte en
+// app.js con solo requireAuth: los operadores también lo ven. Mismas
+// candidatas y regla que awaitingAgent de GET /api/stats.
+export const waitingRouter = Router();
+waitingRouter.get('/', async (req, res) => {
+  try {
+    const db = getDb();
+    const [candidates, agentsSnap] = await Promise.all([
+      fetchWaitingCandidates(db),
+      db.collection('bot-altorancho_agents').get(),
+    ]);
+    const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    res.json(waitingSummary(candidates, agents));
+  } catch (err) {
+    console.error('[stats/waiting]', err);
     res.status(500).json({ error: err.message });
   }
 });
