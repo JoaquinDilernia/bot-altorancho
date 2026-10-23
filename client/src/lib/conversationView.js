@@ -168,7 +168,8 @@ export function buildTimeline(messages, { botName, nameMap = {}, now = new Date(
       if (lastResp && resp !== lastResp) {
         const text = resp === 'bot'
           ? `${bot} volvió a responder`
-          : `${nameMap[msg.sentBy] || 'Alguien del equipo'} tomó la conversación`;
+          // Alto guarda agentName/agentEmail en cada mensaje; sentBy queda por compatibilidad.
+          : `${msg.agentName || nameMap[msg.agentEmail] || nameMap[msg.sentBy] || 'Alguien del equipo'} tomó la conversación`;
         out.push({ kind: 'handoff', text, key: `handoff-${index}` });
       }
       lastResp = resp;

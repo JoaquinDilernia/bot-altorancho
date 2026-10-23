@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { authFetch, BASE_URL } from '../lib/api';
 import { useNotifications } from '../hooks/useNotifications.js';
+import { useBrand } from '../contexts/BrandContext';
+import BotFace from '../components/ui/BotFace';
+import { avatarColor, pillFor, initials, listTime, buildTimeline } from '../lib/conversationView';
 import styles from './Conversations.module.css';
 
 
@@ -22,19 +25,21 @@ const CHANNEL_CONFIG = {
 };
 
 const FILTERS = [
+  { value: 'waiting',       label: 'Esperando' },
   { value: 'bot',           label: 'Bot' },
   { value: 'mine',          label: 'Mis casos' },
   { value: 'critical',      label: '🔴 Crítico' },
   { value: 'urgent',        label: 'Urgentes' },
-  { value: 'waiting',       label: 'Esperando ⏳' },
   { value: 'notifications', label: 'Notificaciones' },
-  { value: 'archived',      label: 'Archivos' },
   { value: 'teams',         label: 'Equipos',  minRole: 'atencion_cliente' },
+  { value: 'archived',      label: 'Archivados' },
 ];
 
 const SLA_WARN_MS  = 15 * 60 * 1000;  // 15 min → amarillo
 const SLA_ALERT_MS = 30 * 60 * 1000;  // 30 min → naranja
 const SLA_CRIT_MS  = 60 * 60 * 1000;  // 60 min → rojo
+
+const COMPOSER_MAX_PX = 120;
 
 function StatusChip({ status }) {
   const cfg = STATUS_CONFIG[status] ?? { label: status, cls: 'bot' };
@@ -49,6 +54,28 @@ function ChannelBadge({ channel }) {
 function AgentBadge({ assignedTo, nameMap = {} }) {
   if (!assignedTo) return null;
   return <span className={styles.agentBadge}>{nameMap[assignedTo] ?? assignedTo}</span>;
+}
+
+// Avatar redondo de color estable con el punto del canal (WhatsApp / Instagram).
+function ConvAvatar({ conv, size }) {
+  const seed = conv.contactId || conv.id;
+  return (
+    <span
+      className={styles.avatar}
+      style={{ background: avatarColor(seed), ...(size ? { width: size, height: size } : null) }}
+      aria-hidden="true"
+    >
+      {initials(conv.contactName || conv.contactId)}
+      <span className={`${styles.chanDot} ${conv.channel === 'instagram' ? styles.chanDotIg : ''}`} />
+    </span>
+  );
+}
+
+function contactSubtitle(conv) {
+  const channel = CHANNEL_CONFIG[conv.channel]?.label ?? conv.channel ?? 'WhatsApp';
+  const id = conv.contactId ?? '';
+  const shown = conv.channel !== 'instagram' && /^\d+$/.test(id) ? `+${id}` : id;
+  return shown ? `${shown} · ${channel}` : channel;
 }
 
 function LabelChip({ label, labelMap, onRemove }) {
@@ -103,6 +130,21 @@ function formatDate(ts) {
   const d = tsToDate(ts);
   if (!d) return '';
   return d.toLocaleDateString('es-AR');
+}
+
+// "mar 2026" — para el "Cliente desde" del perfil.
+function formatMonthYear(ts) {
+  const d = tsToDate(ts);
+  if (!d) return '';
+  return d.toLocaleDateString('es-AR', { month: 'short', year: 'numeric' }).replace('.', '');
+}
+
+const EMOJIS = ['😀', '😂', '😊', '😍', '🙏', '👍', '👌', '👋', '🙌', '👏', '💪', '🎉', '❤️', '🔥', '✅', '❌', '⚠️', '📦', '🚚', '💳', '📞', '⏰', '😕', '😉'];
+
+function formatRecordTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+  const s = (totalSeconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
 }
 
 function hoursAgo(ts) {
@@ -164,15 +206,16 @@ function MsgStatusIcon({ msgStatus, msgError }) {
   return null;
 }
 
-async function downloadMedia(url, suggestedExt = 'jpg') {
+async function downloadMedia(url, fileName = null, suggestedExt = 'jpg') {
   try {
     const res = await fetch(url);
+    if (!res.ok) throw new Error('download failed');
     const blob = await res.blob();
     const ext = blob.type?.split('/')[1]?.split('+')[0] || suggestedExt;
     const blobUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = blobUrl;
-    a.download = `imagen-${Date.now()}.${ext}`;
+    a.download = fileName || `imagen-${Date.now()}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -184,7 +227,91 @@ async function downloadMedia(url, suggestedExt = 'jpg') {
   }
 }
 
-const REPLY_ROLE_LABELS = { user: 'Cliente', admin: 'Agente', assistant: 'Alto' };
+const DOC_ICONS = { pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', csv: '📗', ppt: '📙', pptx: '📙', txt: '📄', zip: '🗜️', rar: '🗜️' };
+
+function fileExt(name) {
+  const m = /\.([a-z0-9]+)$/i.exec(name ?? '');
+  return m ? m[1].toLowerCase() : '';
+}
+
+function formatFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace('.0', '')} MB`;
+}
+
+// "[Imagen] hola" → "hola"; "[Audio recibido]" → "". Cuando el adjunto se ve
+// en la burbuja, la etiqueta entre corchetes sobra.
+function mediaCaption(content) {
+  const m = /^\[[^\]]*\]\s*([\s\S]*)$/.exec(content ?? '');
+  return m ? m[1] : (content ?? '');
+}
+
+// Minúsculas y sin tildes, carácter por carácter, para poder mapear cada
+// posición del texto normalizado a la del original al resaltar.
+function normalizeChar(c) {
+  return c.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+function normalizeForSearch(text) {
+  return Array.from(text ?? '', normalizeChar).join('');
+}
+
+function highlightText(text, query, current) {
+  const q = normalizeForSearch(query.trim());
+  if (!q || !text) return text;
+  let norm = '';
+  const map = [];
+  Array.from(text).forEach((c, i) => {
+    const n = normalizeChar(c);
+    for (let k = 0; k < n.length; k++) map.push(i);
+    norm += n;
+  });
+  const chars = Array.from(text);
+  const parts = [];
+  let last = 0;
+  let pos = norm.indexOf(q);
+  while (pos !== -1) {
+    const start = map[pos];
+    const end = map[pos + q.length - 1] + 1;
+    if (start > last) parts.push(chars.slice(last, start).join(''));
+    parts.push(<mark key={start} className={current ? styles.searchMarkCurrent : styles.searchMark}>{chars.slice(start, end).join('')}</mark>);
+    last = end;
+    pos = norm.indexOf(q, pos + q.length);
+  }
+  if (last < chars.length) parts.push(chars.slice(last).join(''));
+  return parts;
+}
+
+function messageSearchText(msg) {
+  return [msg.content, msg.fileName, msg.transcript].filter(Boolean).join(' ');
+}
+
+// Clave estable de un mensaje (el array se recorta a 200, así que el índice
+// puede correrse si entra un mensaje nuevo mientras hay una selección).
+function msgKey(msg, i) {
+  if (msg.msgId) return msg.msgId;
+  if (msg.waMsgId) return msg.waMsgId;
+  const ts = msg.timestamp;
+  if (ts?._seconds) return `t${ts._seconds}_${ts._nanoseconds ?? 0}_${msg.role}`;
+  return `i${i}`;
+}
+
+// En Alto solo se reenvía un archivo si tiene mediaId (WhatsApp). Los
+// adjuntos de Instagram no lo tienen: de esos se reenvía solo el texto.
+function isForwardable(msg) {
+  return !!msg.mediaId || !!mediaCaption(msg.content).trim();
+}
+
+function isWaWindowClosed(conv) {
+  if (conv.channel !== 'whatsapp') return false;
+  const d = tsToDate(conv.lastClientMessageAt);
+  return !d || Date.now() - d.getTime() > 24 * 60 * 60 * 1000;
+}
+
+const REPLY_ROLE_LABELS = { user: 'Cliente', admin: 'Agente' };
+function replyRoleLabel(role, botName) {
+  return role === 'assistant' ? botName : (REPLY_ROLE_LABELS[role] ?? '');
+}
 const REPLY_PREVIEW_MAX = 80;
 
 // Mismo recorte que `resolveReplyTo()` en bot.service.js, para que la cita se
@@ -195,13 +322,24 @@ function buildReplyPreview(content) {
   return text.length > REPLY_PREVIEW_MAX ? `${text.slice(0, REPLY_PREVIEW_MAX)}…` : text;
 }
 
-function MessageBubble({ msg, onRetry, onQuote, contactId }) {
+function MessageBubble({
+  msg, msgIndex, onRetry, onQuote, onForward, contactId, nameMap = {},
+  searchQuery = '', isCurrentMatch = false, rootRef,
+  selectMode = false, isSelected = false, onToggleSelect,
+}) {
+  const { botName } = useBrand();
   const isUser = msg.role === 'user';
   const isAdmin = msg.role === 'admin';
+  // Alto guarda el nombre del agente en cada mensaje (`agentName`).
+  const agentLabel = msg.agentName || nameMap[msg.agentEmail] || 'Agente';
   const token = localStorage.getItem('altorancho_token');
+  // WhatsApp → proxy del backend por mediaId (Instagram no guarda el archivo).
   const mediaProxyUrl = msg.mediaId
     ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}`
-    : null;
+    : (msg.mediaUrl ?? null);
+  const hasVisibleMedia = !!mediaProxyUrl && ['image', 'audio', 'video', 'document', 'sticker'].includes(msg.mediaType);
+  const shownText = hasVisibleMedia ? mediaCaption(msg.content) : msg.content;
+  const forwardable = isForwardable(msg);
   const isError = isAdmin && msg.msgStatus === 'error';
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [transcript, setTranscript] = useState(msg.transcript ?? null);
@@ -223,12 +361,30 @@ function MessageBubble({ msg, onRetry, onQuote, contactId }) {
     }
   }
 
+  const rowClass = [
+    styles.msg,
+    isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot,
+    selectMode && forwardable ? styles.msgSelectable : '',
+    isSelected ? styles.msgSelected : '',
+  ].join(' ');
+
   return (
-    <div className={`${styles.msg} ${isUser ? styles.msgUser : isAdmin ? styles.msgAdmin : styles.msgBot}`}>
-      <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''}`}>
+    <div
+      ref={rootRef}
+      className={rowClass}
+      data-msg-index={msgIndex}
+      onClick={selectMode && forwardable ? onToggleSelect : undefined}
+    >
+      <div className={`${styles.msgBubble} ${isError ? styles.msgBubbleError : ''} ${isCurrentMatch ? styles.msgBubbleMatch : ''}`}>
+        {/* Firma: el bot con su carita, los agentes con su nombre */}
+        {msg.role === 'assistant' && (
+          <span className={`${styles.msgBy} ${styles.msgByBot}`}><BotFace size={14} />{botName} · bot</span>
+        )}
+        {isAdmin && <span className={`${styles.msgBy} ${styles.msgByAgent}`}>{agentLabel}</span>}
+        {msg.forwarded && <span className={styles.msgForwardedTag}>↪ Reenviado</span>}
         {msg.replyTo && (
           <div className={styles.msgReplyQuote}>
-            <span className={styles.msgReplyQuoteFrom}>{REPLY_ROLE_LABELS[msg.replyTo.role] ?? ''}</span>
+            <span className={styles.msgReplyQuoteFrom}>{replyRoleLabel(msg.replyTo.role, botName)}</span>
             <span className={styles.msgReplyQuoteText}>{msg.replyTo.preview}</span>
           </div>
         )}
@@ -247,7 +403,7 @@ function MessageBubble({ msg, onRetry, onQuote, contactId }) {
                 <div className={styles.lightboxContent} onClick={e => e.stopPropagation()}>
                   <img src={mediaProxyUrl} className={styles.lightboxImg} alt="Imagen ampliada" />
                   <div className={styles.lightboxActions}>
-                    <button type="button" className={styles.lightboxBtn} onClick={() => downloadMedia(mediaProxyUrl)}>
+                    <button type="button" className={styles.lightboxBtn} onClick={() => downloadMedia(mediaProxyUrl, msg.fileName)}>
                       ⬇ Descargar
                     </button>
                     <button type="button" className={styles.lightboxBtn} onClick={() => setLightboxOpen(false)}>
@@ -263,8 +419,8 @@ function MessageBubble({ msg, onRetry, onQuote, contactId }) {
           <div className={styles.msgAudioWrap}>
             <audio controls src={mediaProxyUrl} className={styles.msgAudio} />
             {transcript ? (
-              <p className={styles.msgTranscript}>📝 {transcript}</p>
-            ) : (
+              <p className={styles.msgTranscript}>📝 {highlightText(transcript, searchQuery, isCurrentMatch)}</p>
+            ) : !msg.mediaId ? null : (
               <button type="button" className={styles.transcribeBtn} onClick={handleTranscribe} disabled={transcribing}>
                 {transcribing ? 'Transcribiendo...' : '📝 Transcribir'}
               </button>
@@ -273,30 +429,58 @@ function MessageBubble({ msg, onRetry, onQuote, contactId }) {
           </div>
         )}
         {msg.mediaType === 'video' && mediaProxyUrl && (
-          <video controls src={mediaProxyUrl} className={styles.msgVideo} />
+          <video controls preload="metadata" src={mediaProxyUrl} className={styles.msgVideo} />
+        )}
+        {msg.mediaType === 'sticker' && mediaProxyUrl && (
+          <img src={mediaProxyUrl} className={styles.msgSticker} alt="Sticker" loading="lazy" />
         )}
         {msg.mediaType === 'document' && mediaProxyUrl && (
           <div className={styles.msgDocument}>
-            <span className={styles.msgDocumentIcon}>📄</span>
-            <a href={mediaProxyUrl} target="_blank" rel="noopener noreferrer" className={styles.msgDocumentOpen}>
-              Abrir archivo
+            <span className={styles.msgDocumentIcon}>{DOC_ICONS[fileExt(msg.fileName)] ?? '📄'}</span>
+            <a
+              href={mediaProxyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.msgDocumentOpen}
+              title={msg.fileName ? `Abrir ${msg.fileName}` : 'Abrir archivo'}
+              onClick={e => { if (selectMode) e.preventDefault(); }}
+            >
+              <span className={styles.msgDocumentName}>
+                {msg.fileName ? highlightText(msg.fileName, searchQuery, isCurrentMatch) : 'Abrir archivo'}
+              </span>
+              {(msg.fileSize || fileExt(msg.fileName)) && (
+                <span className={styles.msgDocumentInfo}>
+                  {[formatFileSize(msg.fileSize), fileExt(msg.fileName).toUpperCase()].filter(Boolean).join(' · ')}
+                </span>
+              )}
             </a>
-            <button type="button" className={styles.msgDocumentDownload} onClick={() => downloadMedia(mediaProxyUrl, 'pdf')} title="Descargar">
+            <button
+              type="button"
+              className={styles.msgDocumentDownload}
+              onClick={e => { e.stopPropagation(); downloadMedia(mediaProxyUrl, msg.fileName, 'pdf'); }}
+              title="Descargar"
+            >
               ⬇
             </button>
           </div>
         )}
-        {msg.content && <span>{msg.content}</span>}
+        {shownText && <span>{highlightText(shownText, searchQuery, isCurrentMatch)}</span>}
         {onRetry && (
           <button type="button" className={styles.retryBtn} onClick={() => onRetry(msg.content)}>
-            ↩ Reenviar
+            ↻ Reintentar
           </button>
+        )}
+        {(msg.timestamp || isAdmin) && (
+          <span className={styles.msgTime} title={msg.timestamp ? formatDateTime(msg.timestamp) : undefined}>
+            {msg.timestamp ? formatTime(msg.timestamp) : ''}
+            {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} msgError={msg.msgError} />}
+          </span>
         )}
       </div>
       <span className={styles.msgMeta}>
-        {isUser ? 'Cliente' : isAdmin ? (msg.agentName || 'Agente') : 'Alto'}
-        {msg.timestamp ? ` · ${formatDateTime(msg.timestamp)}` : ''}
-        {isAdmin && <MsgStatusIcon msgStatus={msg.msgStatus} msgError={msg.msgError} />}
+        {selectMode && forwardable && (
+          <span className={`${styles.msgCheck} ${isSelected ? styles.msgCheckOn : ''}`}>{isSelected ? '✓' : ''}</span>
+        )}
         {onQuote && msg.waMsgId && (
           <button
             type="button"
@@ -307,69 +491,234 @@ function MessageBubble({ msg, onRetry, onQuote, contactId }) {
             ↩
           </button>
         )}
+        {onForward && forwardable && !selectMode && (
+          <button
+            type="button"
+            className={styles.msgQuoteBtn}
+            onClick={onForward}
+            title="Reenviar este mensaje"
+          >
+            ↪
+          </button>
+        )}
       </span>
     </div>
   );
 }
 
-function ConvItem({ conv, active, onClick, labelMap, nameMap = {} }) {
+// ---- Modal "Reenviar a…" ----
+function ForwardModal({ items, conversations, onClose, onDone }) {
+  const [query, setQuery] = useState('');
+  const [remote, setRemote] = useState(null);
+  const [picked, setPicked] = useState([]);
+  const [sending, setSending] = useState(false);
+  const [results, setResults] = useState(null);
+  const [error, setError] = useState('');
+  const MAX_TARGETS = 10;
+  // Adjuntos sin archivo guardado (los de Instagram): se reenvía solo su texto.
+  const textOnlyItems = items.filter(m => m.mediaType && m.mediaType !== 'text' && !m.mediaId).length;
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) { setRemote(null); return; }
+    const handle = setTimeout(async () => {
+      try {
+        const r = await authFetch(BASE_URL + `/api/conversations/search?q=${encodeURIComponent(term)}`);
+        const data = await r.json();
+        setRemote(data.conversations ?? []);
+      } catch { setRemote([]); }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query]);
+
+  const q = normalizeForSearch(query.trim());
+  const list = q.length >= 2 && remote
+    ? remote
+    : conversations.filter(c => !q || normalizeForSearch(`${c.contactName ?? ''} ${c.contactId}`).includes(q));
+
+  function toggle(conv) {
+    setPicked(prev => prev.some(p => p.id === conv.id)
+      ? prev.filter(p => p.id !== conv.id)
+      : prev.length >= MAX_TARGETS ? prev : [...prev, conv]);
+  }
+
+  async function send() {
+    if (!picked.length || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      const r = await authFetch(BASE_URL + '/api/conversations/forward', {
+        method: 'POST',
+        body: {
+          messages: items.map(m => ({
+            content: m.content ?? '', mediaType: m.mediaType ?? null, mediaId: m.mediaId ?? null,
+            mediaUrl: m.mediaUrl ?? null, fileName: m.fileName ?? null, mimeType: m.mimeType ?? null,
+          })),
+          targets: picked.map(c => c.id),
+        },
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Error reenviando');
+      setResults(data.results ?? []);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className={styles.newConvOverlay} onClick={sending ? undefined : onClose}>
+      <div className={`${styles.newConvModal} ${styles.forwardModal}`} onClick={e => e.stopPropagation()}>
+        <div className={styles.newConvModalHeader}>
+          <span className={styles.newConvModalTitle}>
+            Reenviar {items.length} mensaje{items.length > 1 ? 's' : ''}
+          </span>
+          <button className={styles.newConvCloseBtn} onClick={onClose} disabled={sending}>×</button>
+        </div>
+
+        {results ? (
+          <div className={styles.forwardBody}>
+            <ul className={styles.forwardResults}>
+              {results.map(r => (
+                <li key={r.contactId} className={r.ok ? styles.forwardResultOk : styles.forwardResultError}>
+                  <span>{r.ok ? '✓' : '✗'} {r.name ?? r.contactId}</span>
+                  {!r.ok && r.sent > 0 && (
+                    <span className={styles.forwardResultMsg}>
+                      Se enviaron {r.sent} mensaje{r.sent > 1 ? 's' : ''}, el resto falló
+                    </span>
+                  )}
+                  {r.error && <span className={styles.forwardResultMsg}>{r.error}</span>}
+                </li>
+              ))}
+            </ul>
+            <div className={styles.newConvFooter}>
+              <button className={styles.newConvSubmitBtn} onClick={() => onDone(results)}>Listo</button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.forwardBody}>
+            <input
+              className={styles.searchInput}
+              placeholder="Buscar chat por nombre o teléfono…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              autoFocus
+            />
+            {picked.length > 0 && (
+              <div className={styles.forwardPicked}>
+                {picked.map(c => (
+                  <button key={c.id} type="button" className={styles.forwardPickedChip} onClick={() => toggle(c)} title="Quitar">
+                    {c.contactName || c.contactId} ×
+                  </button>
+                ))}
+              </div>
+            )}
+            {textOnlyItems > 0 && (
+              <p className={styles.forwardEmpty}>
+                {textOnlyItems === 1 ? 'Un adjunto de Instagram no se puede reenviar' : `${textOnlyItems} adjuntos de Instagram no se pueden reenviar`}: se manda solo su texto.
+              </p>
+            )}
+            <div className={styles.forwardList}>
+              {list.length === 0 && <p className={styles.forwardEmpty}>Sin resultados</p>}
+              {list.map(c => {
+                // Destinos: solo chats de WhatsApp con la ventana de 24 h abierta.
+                const notWhatsapp = c.channel !== 'whatsapp';
+                const closed = isWaWindowClosed(c);
+                const isPicked = picked.some(p => p.id === c.id);
+                const disabled = notWhatsapp || closed || (!isPicked && picked.length >= MAX_TARGETS);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`${styles.forwardItem} ${isPicked ? styles.forwardItemPicked : ''}`}
+                    onClick={() => toggle(c)}
+                    disabled={disabled}
+                  >
+                    <span className={`${styles.msgCheck} ${isPicked ? styles.msgCheckOn : ''}`}>{isPicked ? '✓' : ''}</span>
+                    <span className={styles.forwardItemName}>{c.contactName || c.contactId}</span>
+                    <ChannelBadge channel={c.channel} />
+                    {notWhatsapp && <span className={styles.forwardItemNote}>Solo a WhatsApp</span>}
+                    {!notWhatsapp && closed && <span className={styles.forwardItemNote}>Fuera de ventana 24 hs</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {error && <p className={styles.newConvError}>⚠️ {error}</p>}
+            <div className={styles.newConvFooter}>
+              <button className={styles.newConvCancelBtn} onClick={onClose} disabled={sending}>Cancelar</button>
+              <button className={styles.newConvSubmitBtn} onClick={send} disabled={!picked.length || sending}>
+                {sending ? 'Reenviando…' : `Reenviar${picked.length ? ` a ${picked.length}` : ''}`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const PILL_TONE_CLS = { bot: 'pillBot', wait: 'pillWait', agent: 'pillAgent', ok: 'pillOk', muted: 'pillMuted' };
+
+function ConvItem({ conv, active, onClick, pill, nameMap = {} }) {
   const isUrgent = conv.urgent;
   const pendingMsgs = conv.consecutiveClientMessages ?? 0;
   const isInsistent = pendingMsgs >= 3;
   const isWaiting = pendingMsgs > 0 && conv.lastClientMessageAt;
-  const waitMs = getSlaWaitMs(conv);
-  const slaBadgeColor = slaColor(waitMs);
+  // Color de demora (SLA) de Alto: amarillo 15 min, naranja 30, rojo 60
+  // (solo si espera a un agente).
+  const slaBadgeColor = slaColor(getSlaWaitMs(conv));
+  const firstLabel = conv.labels?.[0];
+  const moreLabels = (conv.labels?.length ?? 0) - 1;
+  // El badge del asignado se muestra si la píldora no lo nombra ya.
+  const assigneeName = conv.assignedTo ? (nameMap[conv.assignedTo] ?? conv.assignedTo) : null;
+  const showAgentBadge = !!assigneeName && !pill.text.includes(assigneeName);
 
   return (
     <button
       className={`${styles.item} ${active ? styles.itemActive : ''}`}
       onClick={onClick}
     >
-      <div className={styles.itemTop}>
-        <span className={styles.itemName}>{conv.contactName || conv.contactId}</span>
-        <div className={styles.itemTopRight}>
+      <ConvAvatar conv={conv} />
+      <div className={styles.itemBody}>
+        <div className={styles.itemTop}>
+          <span className={styles.itemName}>{conv.contactName || conv.contactId}</span>
+          {isWaiting ? (
+            <span
+              className={`${styles.itemTime} ${slaBadgeColor ? styles.itemTimeSla : ''}`}
+              title="Tiempo esperando respuesta de agente"
+              style={slaBadgeColor ? { background: slaBadgeColor + '22', color: slaBadgeColor, borderColor: slaBadgeColor + '66' } : undefined}
+            >
+              ⏳ {formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
+            </span>
+          ) : (
+            conv.updatedAt && <span className={styles.itemTime} title={formatDateTime(conv.updatedAt)}>{listTime(conv.updatedAt)}</span>
+          )}
+        </div>
+        <div className={styles.itemMid}>
+          <p className={styles.itemPreview}>{conv.lastMessage || ' '}</p>
           <div className={styles.itemIndicators}>
             {conv.critical && <span className={styles.criticalBadge} title="Crítico — 4+ mensajes sin respuesta">🔴</span>}
             {isUrgent && <span className={styles.urgentFlagBadge} title="Urgente">⚡</span>}
             {isInsistent && <span className={styles.insistentBadge} title="Cliente insistente — escribió varias veces sin respuesta">⚠</span>}
-            {isWaiting && (
-              <span
-                className={styles.waitTimeBadge}
-                title="Tiempo esperando respuesta de agente"
-                style={slaBadgeColor ? { background: slaBadgeColor + '22', color: slaBadgeColor, borderColor: slaBadgeColor + '66' } : undefined}
-              >
-                ⏳ {formatAge(conv.waitingSince ?? conv.lastClientMessageAt)}
-              </span>
-            )}
             {pendingMsgs > 0 && (
               <span className={styles.pendingMsgsBadge} title={`${pendingMsgs} mensaje${pendingMsgs > 1 ? 's' : ''} sin respuesta`}>
                 {pendingMsgs} msg{pendingMsgs > 1 ? 's' : ''}
               </span>
             )}
+            {conv.unread > 0 && <span className={styles.itemUnread}>{conv.unread}</span>}
           </div>
-          {conv.updatedAt && <span className={styles.itemAge}>{formatAge(conv.updatedAt)}</span>}
-          {conv.unread > 0 && <span className={styles.itemUnread}>{conv.unread}</span>}
         </div>
-      </div>
-      <div className={styles.itemBottom}>
-        <StatusChip status={conv.status || 'bot'} />
-        <ChannelBadge channel={conv.channel} />
-        <AgentBadge assignedTo={conv.assignedTo} nameMap={nameMap} />
-      </div>
-      {conv.lastMessage && <p className={styles.itemPreview}>{conv.lastMessage}</p>}
-      {conv.labels?.length > 0 && (
-        <div className={styles.itemLabels}>
-          {conv.labels.map(l => (
-            <span
-              key={l}
-              className={styles.labelChipSmall}
-              style={{ background: (labelMap[l] ?? '#6b7280') + '22', color: labelMap[l] ?? '#6b7280', borderColor: (labelMap[l] ?? '#6b7280') + '55' }}
-            >
-              {l}
+        <div className={styles.itemWho}>
+          <span className={`${styles.pill} ${styles[PILL_TONE_CLS[pill.tone]]}`}>{pill.text}</span>
+          {showAgentBadge && <AgentBadge assignedTo={conv.assignedTo} nameMap={nameMap} />}
+          {firstLabel && (
+            <span className={`${styles.pill} ${styles.pillLabel}`} title={conv.labels.join(', ')}>
+              {firstLabel}{moreLabels > 0 ? ` +${moreLabels}` : ''}
             </span>
-          ))}
+          )}
         </div>
-      )}
+      </div>
     </button>
   );
 }
@@ -378,82 +727,6 @@ export default function Conversations() {
   const { agent } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [showMobileProfile, setShowMobileProfile] = useState(false); // mobile-only: perfil como panel deslizable
-  const [messages, setMessages] = useState([]);
-  const [customer, setCustomer] = useState(null);
-  const [notes, setNotes] = useState('');
-  const [savingNotes, setSavingNotes] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [filter, setFilter] = useState('bot');
-  const [labelFilter, setLabelFilter] = useState(null);
-  const [search, setSearch] = useState('');
-  const [searchResults, setSearchResults] = useState(null); // null = no está buscando; array = resultados del backend
-  const [searching, setSearching] = useState(false);
-  const [archivedConversations, setArchivedConversations] = useState(null); // null = no cargado todavía
-  const [loadingArchived, setLoadingArchived] = useState(false);
-  const [reply, setReply] = useState('');
-  const [sending, setSending] = useState(false);
-  const [replyingTo, setReplyingTo] = useState(null); // { waMsgId, role, preview } | null
-  const [updating, setUpdating] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [allLabels, setAllLabels] = useState([]);
-  const [labelDropOpen, setLabelDropOpen] = useState(false);
-  const [quickReplies, setQuickReplies] = useState([]);
-  const [qrOpen, setQrOpen] = useState(false);
-  const [templates, setTemplates] = useState([]);
-  const [showNewConvModal, setShowNewConvModal] = useState(false);
-  const [newPhone, setNewPhone] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newTemplate, setNewTemplate] = useState(null);
-  const [newParams, setNewParams] = useState([]);
-  const [newConvSaving, setNewConvSaving] = useState(false);
-  const [newConvError, setNewConvError] = useState('');
-  const [summary, setSummary] = useState(null);
-  const [summaryGenerating, setSummaryGenerating] = useState(false);
-  const [departments, setDepartments] = useState([]);
-  const [agentsList, setAgentsList] = useState([]);
-  const [nameMap, setNameMap] = useState({});
-  const [teamsDeptFilter, setTeamsDeptFilter] = useState('');
-  const [apiWindowError, setApiWindowError] = useState(false);
-  const [templateSendOpen, setTemplateSendOpen] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState(null);
-  const [templateParams, setTemplateParams] = useState([]);
-  const [sendingTemplate, setSendingTemplate] = useState(false);
-  const [templateSendError, setTemplateSendError] = useState('');
-  const messagesEndRef = useRef(null);
-  const messagesContainerRef = useRef(null);
-  const atBottomRef = useRef(true);
-  const prevMsgCountRef = useRef(0);
-  const pollConvRef = useRef(null);
-  const pollMsgRef = useRef(null);
-  const selectedIdRef = useRef(null);
-  const mediaInputRef = useRef(null);
-
-  const labelMap = Object.fromEntries(allLabels.map(l => [l.name, l.color]));
-  const myId = agent?.id;
-
-  useNotifications(conversations);
-
-  useEffect(() => {
-    loadConversations();
-    loadAllLabels();
-    loadQuickReplies();
-    // Load departments + agents for name resolution
-    Promise.all([
-      authFetch(BASE_URL + '/api/departments').then(r => r.ok ? r.json() : { departments: [] }),
-      authFetch(BASE_URL + '/api/auth/users').then(r => r.ok ? r.json() : []),
-    ]).then(([deptsData, agents]) => {
-      const depts = deptsData.departments ?? [];
-      setDepartments(depts);
-      setAgentsList(agents.filter(a => a.role !== 'admin'));
-      const map = {};
-      for (const d of depts) map[d.id] = d.name;
-      for (const a of agents) { map[a.email] = a.name; map[a.id] = a.name; }
-      setNameMap(map);
-    });
-    pollConvRef.current = setInterval(loadConversations, 10000);
-    return () => clearInterval(pollConvRef.current);
-  }, []);
 
   // Link directo a una conversación (?open=<id>, ej. desde Estadísticas → Etiquetas).
   // Se pide por id porque puede no estar entre las 200 que trae la lista.
@@ -467,6 +740,121 @@ export default function Conversations() {
       .catch(() => {})
       .finally(() => setSearchParams({}, { replace: true }));
   }, [openId]);
+
+  const [showMobileProfile, setShowMobileProfile] = useState(false); // mobile-only: perfil como panel deslizable
+  const [messages, setMessages] = useState([]);
+  const [customer, setCustomer] = useState(null);
+  const [notes, setNotes] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [filter, setFilter] = useState('bot');
+  const [labelFilter, setLabelFilter] = useState(null);
+  const [search, setSearch] = useState('');
+  const [searchResults, setSearchResults] = useState(null); // null = no está buscando; array = resultados del backend
+  const [searching, setSearching] = useState(false);
+  const [archivedConversations, setArchivedConversations] = useState(null); // null = no cargado todavía
+  const [loadingArchived, setLoadingArchived] = useState(false);
+  const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState(null); // { waMsgId, role, preview } | null
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordedAudio, setRecordedAudio] = useState(null); // { blob, url, mimeType } — grabado, pendiente de enviar/descartar
+  const [updating, setUpdating] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [allLabels, setAllLabels] = useState([]);
+  const [labelDropOpen, setLabelDropOpen] = useState(false);
+  const [quickReplies, setQuickReplies] = useState([]);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [templates, setTemplates] = useState([]);
+  const [showNewConvModal, setShowNewConvModal] = useState(false);
+  const [newPhone, setNewPhone] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newTemplate, setNewTemplate] = useState(null);
+  const [newParams, setNewParams] = useState([]);
+  const [newConvSaving, setNewConvSaving] = useState(false);
+  const [newConvError, setNewConvError] = useState('');
+  const [summary, setSummary] = useState(null);
+  const [summaryGenerating, setSummaryGenerating] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [departments, setDepartments] = useState([]);
+  const [agentsList, setAgentsList] = useState([]); // sin admins: para derivar
+  const [allAgents, setAllAgents] = useState(null); // todos: para la regla de "esperando" (como el server)
+  const [nameMap, setNameMap] = useState({});
+  const [teamsDeptFilter, setTeamsDeptFilter] = useState('');
+  const [apiWindowError, setApiWindowError] = useState(false);
+  const [templateSendOpen, setTemplateSendOpen] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [templateParams, setTemplateParams] = useState([]);
+  const [sendingTemplate, setSendingTemplate] = useState(false);
+  const [templateSendError, setTemplateSendError] = useState('');
+  const [pendingFile, setPendingFile] = useState(null); // { file, previewUrl, caption } — adjunto elegido, pendiente de enviar
+  const [dragOver, setDragOver] = useState(false);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatSearch, setChatSearch] = useState('');
+  const [chatSearchIdx, setChatSearchIdx] = useState(0);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState([]);
+  const [forwardItems, setForwardItems] = useState(null); // mensajes a reenviar → abre el modal
+  const messagesContainerRef = useRef(null);
+  const messageRefs = useRef({});
+  const initialScrollPendingRef = useRef(false);
+  const atBottomRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
+  const pollConvRef = useRef(null);
+  const pollMsgRef = useRef(null);
+  const selectedIdRef = useRef(null);
+  const mediaInputRef = useRef(null);
+  const replyInputRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const mediaStreamRef = useRef(null);
+  const recordTimerRef = useRef(null);
+
+  // Composer que crece con el texto (hasta 120 px). Corre también cuando el
+  // valor cambia por código (respuesta rápida, limpiar después de enviar) y
+  // cuando el textarea se vuelve a montar. Reemplaza a field-sizing, que
+  // Safari/iOS y Firefox no soportan.
+  useLayoutEffect(() => {
+    const el = replyInputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_PX)}px`;
+  }, [reply, selected?.id, selected?.humanMode, recording, recordedAudio]);
+
+  const labelMap = Object.fromEntries(allLabels.map(l => [l.name, l.color]));
+  const myId = agent?.id;
+  const { botName } = useBrand();
+  // Alto llama "departamentos" a los grupos (en el helper: `areas`). `agents` hace
+  // que "Esperando" sea la misma regla que el server (services/waiting.js);
+  // hasta que cargan los usuarios se usa la regla sin lista de agentes.
+  const pillOf = (c) => pillFor(c, { botName, areas: departments, nameMap, ...(allAgents && { agents: allAgents }) });
+
+  useNotifications(conversations);
+
+  useEffect(() => {
+    loadConversations();
+    loadAllLabels();
+    loadQuickReplies();
+    // Load departments + agents for name resolution
+    Promise.all([
+      authFetch(BASE_URL + '/api/departments').then(r => r.ok ? r.json() : { departments: [] }),
+      authFetch(BASE_URL + '/api/auth/users').then(r => r.ok ? r.json() : null),
+    ]).then(([deptsData, agents]) => {
+      const depts = deptsData.departments ?? [];
+      const users = Array.isArray(agents) ? agents : [];
+      setDepartments(depts);
+      setAgentsList(users.filter(a => a.role !== 'admin'));
+      if (Array.isArray(agents)) setAllAgents(agents);
+      const map = {};
+      for (const d of depts) map[d.id] = d.name;
+      for (const a of users) { map[a.email] = a.name; map[a.id] = a.name; }
+      setNameMap(map);
+    }).catch(() => {});
+    pollConvRef.current = setInterval(loadConversations, 10000);
+    return () => clearInterval(pollConvRef.current);
+  }, []);
 
   useEffect(() => {
     const term = search.trim();
@@ -500,12 +888,25 @@ export default function Conversations() {
     selectedIdRef.current = selected.id;
     atBottomRef.current = true;
     prevMsgCountRef.current = 0;
+    // Se vacía la lista para no mostrar (ni scrollear sobre) los mensajes del
+    // chat anterior, y se marca que hay que bajar al final apenas carguen.
+    initialScrollPendingRef.current = true;
+    messageRefs.current = {};
+    setMessages([]);
+    setMessagesLoading(true);
+    setChatSearchOpen(false);
+    setChatSearch('');
+    setSelectMode(false);
+    setSelectedKeys([]);
+    setForwardItems(null);
+    setPendingFile(prev => { if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl); return null; });
     loadMessages(selected.id);
     loadCustomer(selected.id);
     loadSummary(selected.id);
     markRead(selected.id);
     setLabelDropOpen(false);
     setQrOpen(false);
+    setEmojiOpen(false);
     // Reset window state when switching conversations
     setApiWindowError(false);
     setTemplateSendOpen(false);
@@ -513,20 +914,129 @@ export default function Conversations() {
     setTemplateParams([]);
     setTemplateSendError('');
     setReplyingTo(null);
-    setShowMobileProfile(false);
     pollMsgRef.current = setInterval(() => loadMessages(selectedIdRef.current), 5000);
     return () => clearInterval(pollMsgRef.current);
   }, [selected?.id]);
 
-  useEffect(() => {
+  // scrollTo sobre el contenedor (NUNCA scrollIntoView: arrastra a los
+  // contenedores padres y hace saltar todo el layout).
+  function scrollMessagesToBottom(smooth = false) {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  }
+
+  // useLayoutEffect: el salto al final ocurre antes de pintar, así al abrir un
+  // chat se ve directo el último mensaje (antes arrancaba arriba de todo).
+  useLayoutEffect(() => {
     const newLen = messages.length;
     const hadMore = newLen > prevMsgCountRef.current;
     prevMsgCountRef.current = newLen;
-    if (hadMore && atBottomRef.current) {
-      const el = messagesContainerRef.current;
-      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    if (initialScrollPendingRef.current) {
+      if (!newLen) return;
+      initialScrollPendingRef.current = false;
+      atBottomRef.current = true;
+      scrollMessagesToBottom(false);
+      return;
     }
+    if (hadMore && atBottomRef.current) scrollMessagesToBottom(true);
   }, [messages]);
+
+  // Imágenes/videos que terminan de cargar después agrandan el chat: si el
+  // agente estaba abajo, se lo mantiene abajo. 'load' no burbujea, por eso se
+  // escucha en fase de captura.
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const onMediaLoad = () => { if (atBottomRef.current) scrollMessagesToBottom(false); };
+    el.addEventListener('load', onMediaLoad, true);
+    el.addEventListener('loadedmetadata', onMediaLoad, true);
+    return () => {
+      el.removeEventListener('load', onMediaLoad, true);
+      el.removeEventListener('loadedmetadata', onMediaLoad, true);
+    };
+  }, [selected?.id]);
+
+  // Mensajes + separadores de día + avisos de traspaso. Derivado (puro) del
+  // array de mensajes: cada poll de 5 s lo recalcula desde cero, así que no
+  // puede acumular avisos duplicados.
+  const timeline = useMemo(() => buildTimeline(messages, { botName, nameMap }), [messages, botName, nameMap]);
+
+  // Insertar un emoji donde está el cursor del composer.
+  function insertEmoji(emoji) {
+    const el = replyInputRef.current;
+    const start = el?.selectionStart ?? reply.length;
+    const end = el?.selectionEnd ?? reply.length;
+    setReply(reply.slice(0, start) + emoji + reply.slice(end));
+    setEmojiOpen(false);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + emoji.length, start + emoji.length);
+    });
+  }
+
+  // ---- Buscador dentro del chat ----
+  const chatSearchMatches = useMemo(() => {
+    const q = normalizeForSearch(chatSearch.trim());
+    if (!q) return [];
+    const out = [];
+    messages.forEach((m, i) => { if (normalizeForSearch(messageSearchText(m)).includes(q)) out.push(i); });
+    return out;
+  }, [messages, chatSearch]);
+  const chatSearchCurrentPos = chatSearchMatches.length ? Math.min(chatSearchIdx, chatSearchMatches.length - 1) : -1;
+  const chatSearchCurrentMsg = chatSearchCurrentPos >= 0 ? chatSearchMatches[chatSearchCurrentPos] : -1;
+
+  // Al cambiar el texto buscado se arranca por la coincidencia más reciente (como WhatsApp).
+  useEffect(() => { setChatSearchIdx(Number.MAX_SAFE_INTEGER); }, [chatSearch]);
+
+  useEffect(() => {
+    if (!chatSearchOpen || chatSearchCurrentMsg < 0) return;
+    const el = messageRefs.current[chatSearchCurrentMsg];
+    const cont = messagesContainerRef.current;
+    if (!el || !cont) return;
+    const er = el.getBoundingClientRect();
+    const cr = cont.getBoundingClientRect();
+    cont.scrollTo({ top: cont.scrollTop + (er.top - cr.top) - cr.height / 2 + er.height / 2, behavior: 'smooth' });
+  }, [chatSearchCurrentMsg, chatSearchOpen]);
+
+  function stepChatSearch(dir) {
+    const n = chatSearchMatches.length;
+    if (!n) return;
+    setChatSearchIdx(((chatSearchCurrentPos + dir) % n + n) % n);
+  }
+
+  function closeChatSearch() {
+    setChatSearchOpen(false);
+    setChatSearch('');
+  }
+
+  // ---- Selección para reenviar ----
+  function startForwardSelection(key) {
+    setSelectMode(true);
+    setSelectedKeys([key]);
+  }
+
+  function toggleSelectedKey(key) {
+    setSelectedKeys(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  }
+
+  function cancelSelection() {
+    setSelectMode(false);
+    setSelectedKeys([]);
+  }
+
+  function openForwardModal() {
+    const items = messages.filter((m, i) => selectedKeys.includes(msgKey(m, i)));
+    if (items.length) setForwardItems(items);
+  }
+
+  function handleForwardDone(results) {
+    setForwardItems(null);
+    cancelSelection();
+    if (selected && results?.some(r => r.contactId === selected.id && r.sent)) loadMessages(selected.id);
+    loadConversations();
+  }
 
   function handleMessagesScroll() {
     const el = messagesContainerRef.current;
@@ -627,8 +1137,13 @@ export default function Conversations() {
     try {
       const res = await authFetch(BASE_URL + `/api/conversations/${contactId}/messages`);
       const data = await res.json();
+      // Un poll del chat anterior que vuelve tarde no tiene que pisar al actual.
+      if (contactId !== selectedIdRef.current) return;
       setMessages(data.messages ?? []);
-    } catch { setMessages([]); }
+    } catch { /* se reintenta en el próximo poll — no vaciar el chat por un error de red */ }
+    finally {
+      if (contactId === selectedIdRef.current) setMessagesLoading(false);
+    }
   }
 
   async function loadCustomer(contactId) {
@@ -816,16 +1331,77 @@ export default function Conversations() {
     setTemplateParams(tpl?.params?.map(() => '') ?? []);
   }
 
-  async function handleMediaSelect(e) {
-    const file = e.target.files?.[0];
+  const MAX_FILE_BYTES = 16 * 1024 * 1024; // tope del server de Alto (multer)
+
+  function queueFile(file) {
     if (!file || !selected) return;
+    if (file.size > MAX_FILE_BYTES) {
+      alert(`⚠️ "${file.name}" pesa ${formatFileSize(file.size)}. Se pueden enviar archivos de hasta 16 MB.`);
+      return;
+    }
+    setPendingFile(prev => {
+      if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl);
+      return { file, caption: '', previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : null };
+    });
+  }
+
+  function handleMediaSelect(e) {
+    const file = e.target.files?.[0];
     e.target.value = '';
+    queueFile(file);
+  }
+
+  function discardPendingFile() {
+    setPendingFile(prev => { if (prev?.previewUrl) URL.revokeObjectURL(prev.previewUrl); return null; });
+  }
+
+  // WhatsApp sólo acepta fotos JPG/PNG: una WEBP/GIF/BMP se convierte acá.
+  async function convertImageToJpeg(file) {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.9));
+    if (!blob) throw new Error('No se pudo convertir la imagen');
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  }
+
+  function handlePaste(e) {
+    const file = e.clipboardData?.files?.[0];
+    if (file) { e.preventDefault(); queueFile(file); }
+  }
+
+  function handleDragOver(e) {
+    if (!canCompose || !e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    if (!dragOver) setDragOver(true);
+  }
+
+  function handleDrop(e) {
+    if (!canCompose) return;
+    e.preventDefault();
+    setDragOver(false);
+    queueFile(e.dataTransfer?.files?.[0]);
+  }
+
+  async function sendPendingFile() {
+    if (!pendingFile || !selected || sending) return;
     setSending(true);
     const quoted = replyingTo;
     setReplyingTo(null);
     try {
+      let file = pendingFile.file;
+      if (file.type.startsWith('image/') && !['image/jpeg', 'image/png'].includes(file.type)) {
+        file = await convertImageToJpeg(file).catch(() => file); // si no se puede, el backend avisa el motivo
+      }
       const form = new FormData();
-      form.append('file', file);
+      form.append('file', file, file.name);
+      // El server de Alto no recibe pie de foto: el texto va como mensaje aparte.
+      const caption = file.type.startsWith('audio/') ? '' : pendingFile.caption.trim();
       if (quoted) form.append('replyTo', JSON.stringify(quoted));
       const r = await authFetch(BASE_URL + `/api/conversations/${selected.id}/media`, {
         method: 'POST',
@@ -840,9 +1416,138 @@ export default function Conversations() {
         } else {
           alert(`⚠️ ${data.error ?? 'Error enviando archivo'}`);
         }
+        // Rechazado por formato/tamaño (400/413): se deja el adjunto en la
+        // barra para que el agente vea qué archivo era y lo descarte.
+        if (r.status === 400 || r.status === 413) return;
+      } else if (caption) {
+        const rc = await authFetch(BASE_URL + `/api/conversations/${selected.id}/reply`, {
+          method: 'POST',
+          body: { message: caption },
+        });
+        await loadMessages(selected.id);
+        if (!rc.ok) {
+          const data = await rc.json().catch(() => ({}));
+          alert(`⚠️ El archivo se envió pero el texto no: ${data.error ?? 'Error desconocido'}`);
+        }
       }
+      discardPendingFile();
     } finally { setSending(false); }
   }
+
+  // WhatsApp acepta audio/ogg (opus) y audio/mp4 (AAC), pero no audio/webm, y el
+  // server de Alto no convierte el audio. Por eso solo se graba si el
+  // navegador sabe grabar en uno de esos formatos; si no, el micrófono no aparece.
+  const AUDIO_MIME_CANDIDATES = ['audio/ogg;codecs=opus', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4'];
+
+  function pickAudioMimeType() {
+    if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return '';
+    return AUDIO_MIME_CANDIDATES.find(t => MediaRecorder.isTypeSupported(t)) ?? '';
+  }
+
+  async function startRecording() {
+    if (recording || !selected || !pickAudioMimeType()) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaStreamRef.current = stream;
+      const mimeType = pickAudioMimeType();
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        // Sin ";codecs=…": Meta espera el tipo base (audio/ogg, audio/mp4).
+        const baseType = (recorder.mimeType || mimeType).split(';')[0];
+        const blob = new Blob(audioChunksRef.current, { type: baseType });
+        setRecordedAudio({ blob, url: URL.createObjectURL(blob), mimeType: baseType });
+        stream.getTracks().forEach(t => t.stop());
+        mediaStreamRef.current = null;
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch {
+      alert('No se pudo acceder al micrófono. Revisá los permisos del navegador para este sitio.');
+    }
+  }
+
+  function stopRecording() {
+    if (!recording) return;
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+    clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+  }
+
+  // ✕ mientras se graba: corta el micrófono y descarta lo grabado sin generar
+  // preview. (El botón ya existía pero llamaba a una función que no estaba
+  // definida → ReferenceError apenas aparecía → pantalla en blanco.)
+  function cancelRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      if (recorder.state !== 'inactive') recorder.stop();
+    }
+    mediaStreamRef.current?.getTracks().forEach(t => t.stop());
+    mediaStreamRef.current = null;
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+    clearInterval(recordTimerRef.current);
+    recordTimerRef.current = null;
+    setRecording(false);
+    setRecordSeconds(0);
+  }
+
+  function discardRecordedAudio() {
+    if (recordedAudio) URL.revokeObjectURL(recordedAudio.url);
+    setRecordedAudio(null);
+    setRecordSeconds(0);
+  }
+
+  async function sendRecordedAudio() {
+    if (!recordedAudio || !selected || sending) return;
+    setSending(true);
+    try {
+      const ext = recordedAudio.mimeType.includes('ogg') ? 'ogg' : 'm4a';
+      const form = new FormData();
+      form.append('file', recordedAudio.blob, `nota-de-voz.${ext}`);
+      if (replyingTo) { form.append('replyTo', JSON.stringify(replyingTo)); setReplyingTo(null); }
+      const r = await authFetch(BASE_URL + `/api/conversations/${selected.id}/media`, {
+        method: 'POST',
+        body: form,
+      });
+      await loadMessages(selected.id);
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        if (data.windowExpired) {
+          setApiWindowError(true);
+          if (templates.length === 0) loadTemplates();
+        } else {
+          alert(`⚠️ ${data.error ?? 'Error enviando audio'}`);
+        }
+      }
+    } finally {
+      setSending(false);
+      URL.revokeObjectURL(recordedAudio.url);
+      setRecordedAudio(null);
+      setRecordSeconds(0);
+    }
+  }
+
+  // Si cambia la conversación seleccionada (o se desmonta la página) con una grabación en
+  // curso o pendiente de enviar, se descarta — no tiene sentido mandarla a otro contacto.
+  useEffect(() => {
+    setRecordedAudio(prev => { if (prev) URL.revokeObjectURL(prev.url); return null; });
+    setRecording(false);
+    setRecordSeconds(0);
+    setShowMobileProfile(false);
+    return () => {
+      mediaStreamRef.current?.getTracks().forEach(t => t.stop());
+      mediaRecorderRef.current = null;
+      clearInterval(recordTimerRef.current);
+    };
+  }, [selected?.id]);
 
   const isHuman = selected?.humanMode;
   const currentStatus = selected?.status || 'bot';
@@ -871,6 +1576,10 @@ export default function Conversations() {
   }
 
   const approvedTemplates = templates.filter(t => t.metaStatus === 'APPROVED');
+  const canCompose = !!selected && isHuman && !isArchived && !isWindowExpired && !selectMode;
+  // Nota de voz: solo WhatsApp (por Instagram el server no manda archivos) y solo
+  // si el navegador graba en un formato que WhatsApp acepta.
+  const canRecord = selected?.channel === 'whatsapp' && !!pickAudioMimeType();
 
   const filtered = searchResults !== null
     ? searchResults
@@ -897,16 +1606,16 @@ export default function Conversations() {
           if (isConvArchived) return false;
           if (!convUrgent) return false;
         } else if (filter === 'waiting') {
+          // Regla única del server: escaladas que todavía no tomó ningún agente
+          // (WhatsApp e Instagram; urgentes incluidas).
           if (isConvArchived) return false;
-          if (!convHuman) return false;
-          if (getSlaWaitMs(c) < 60 * 60 * 1000) return false;
+          if (pillOf(c).tone !== 'wait') return false;
         } else if (filter === 'teams') {
           if (isConvArchived) return false;
           if (!convHuman) return false;
           if (teamsDeptFilter && c.assignedTo !== teamsDeptFilter) return false;
-        } else if (filter === 'all') {
-          if (isConvArchived) return false;
         } else if (filter === 'notifications') {
+          // Chats abiertos por una plantilla/difusión que el cliente todavía no respondió.
           if (isConvArchived) return false;
           if (!c.notifiedAt) return false;
           const notifiedAt = tsToDate(c.notifiedAt);
@@ -922,6 +1631,12 @@ export default function Conversations() {
     filtered.sort((a, b) => getSlaWaitMs(b) - getSlaWaitMs(a));
   }
 
+  const waitingCount = conversations.filter(c => {
+    const s = c.status || 'bot';
+    return s !== 'bot_archived' && s !== 'resolved' && pillOf(c).tone === 'wait';
+  }).length;
+  const selectedPill = selected ? pillOf(selected) : null;
+
   return (
     <div className={styles.page}>
       {/* ---- Sidebar ---- */}
@@ -934,11 +1649,11 @@ export default function Conversations() {
           <input
             className={styles.searchInput}
             type="search"
-            placeholder="Buscar contacto..."
+            placeholder="Buscar por nombre o teléfono"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
-          <div className={styles.chips}>
+          <div className={styles.chips} role="tablist" aria-label="Filtros">
             {FILTERS.filter(f => {
               if (!f.minRole) return true;
               if (f.minRole === 'atencion_cliente') return agent?.role === 'admin' || agent?.role === 'atencion_cliente';
@@ -949,10 +1664,28 @@ export default function Conversations() {
                 key={f.value}
                 onClick={() => { setFilter(f.value); if (f.value !== 'teams') setTeamsDeptFilter(''); }}
                 className={`${styles.filterChip} ${filter === f.value ? styles.filterChipActive : ''}`}
+                role="tab"
+                aria-selected={filter === f.value}
               >
                 {f.label}
+                {f.value === 'waiting' && waitingCount > 0 && (
+                  <em className={styles.filterChipCount}>{waitingCount > 99 ? '99+' : waitingCount}</em>
+                )}
               </button>
             ))}
+            {allLabels.length > 0 && (
+              <select
+                className={`${styles.filterChip} ${styles.chipSelect} ${labelFilter ? styles.filterChipActive : ''}`}
+                value={labelFilter ?? ''}
+                onChange={e => setLabelFilter(e.target.value || null)}
+                title="Filtrar por etiqueta"
+              >
+                <option value="">Etiqueta ▾</option>
+                {allLabels.map(l => (
+                  <option key={l.id} value={l.name}>{l.name}</option>
+                ))}
+              </select>
+            )}
           </div>
           {filter === 'teams' && departments.length > 0 && (
             <select
@@ -963,18 +1696,6 @@ export default function Conversations() {
               <option value="">Todos los departamentos</option>
               {departments.map(d => (
                 <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-          )}
-          {allLabels.length > 0 && (
-            <select
-              className={styles.labelSelect}
-              value={labelFilter ?? ''}
-              onChange={e => setLabelFilter(e.target.value || null)}
-            >
-              <option value="">Todas las etiquetas</option>
-              {allLabels.map(l => (
-                <option key={l.id} value={l.name}>{l.name}</option>
               ))}
             </select>
           )}
@@ -996,7 +1717,7 @@ export default function Conversations() {
                 conv={c}
                 active={selected?.id === c.id}
                 onClick={() => setSelected(c)}
-                labelMap={labelMap}
+                pill={pillOf(c)}
                 nameMap={nameMap}
               />
             ))
@@ -1014,7 +1735,6 @@ export default function Conversations() {
         ) : (
           <>
             <div className={styles.threadHeader}>
-              {/* Row 1: name + close/reopen */}
               <div className={styles.threadHeaderTop}>
                 <button
                   type="button"
@@ -1024,171 +1744,267 @@ export default function Conversations() {
                 >
                   ←
                 </button>
-                <span className={styles.threadName}>
-                  {selected.contactName || selected.contactId}
-                  {isUrgentFlag && <span style={{ marginLeft: 6, fontSize: 14 }}>⚡</span>}
-                </span>
+                <ConvAvatar conv={selected} size={38} />
+                <div className={styles.threadTitle}>
+                  <span className={styles.threadName}>
+                    {selected.contactName || selected.contactId}
+                    {isUrgentFlag && <span className={styles.threadUrgentMark} title="Urgente">⚡</span>}
+                  </span>
+                  <span className={styles.threadSub}>{contactSubtitle(selected)}</span>
+                </div>
                 <div className={styles.threadActions}>
                   <button
                     type="button"
-                    className={styles.profileToggleBtn}
+                    className={`${styles.iconBtn} ${chatSearchOpen ? styles.iconBtnOn : ''}`}
+                    onClick={() => (chatSearchOpen ? closeChatSearch() : setChatSearchOpen(true))}
+                    title="Buscar en este chat"
+                  >
+                    🔍
+                  </button>
+                  {!isArchived && (agentsList.length > 0 || departments.length > 0) && (
+                    <span className={styles.deriveWrap}>
+                      {/* En mobile el select queda invisible encima de este ícono */}
+                      <span className={`${styles.iconBtn} ${styles.deriveIcon}`} aria-hidden="true">↪</span>
+                      <select
+                        className={styles.deriveSelect}
+                        value=""
+                        onChange={e => { if (e.target.value) dispatch('assign_dept', { deptId: e.target.value }); }}
+                        disabled={updating}
+                        title="Derivar a un departamento o a un agente"
+                        aria-label="Derivar a un departamento o a un agente"
+                      >
+                        <option value="">↪ Derivar…</option>
+                        {departments.length > 0 && (
+                          <optgroup label="Departamentos">
+                            {departments.map(d => (
+                              <option key={d.id} value={d.id}>{d.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                        {agentsList.length > 0 && (
+                          <optgroup label="Agentes">
+                            {agentsList.map(a => (
+                              <option key={a.id} value={a.email}>{a.name}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </span>
+                  )}
+                  {!isArchived && (
+                    <button
+                      type="button"
+                      className={`${styles.iconBtn} ${isUrgentFlag ? styles.iconBtnUrgent : ''}`}
+                      onClick={() => dispatch(isUrgentFlag ? 'unset_urgent' : 'set_urgent')}
+                      disabled={updating}
+                      title={isUrgentFlag ? 'Quitar urgente' : 'Marcar como urgente'}
+                      aria-pressed={isUrgentFlag}
+                    >
+                      ⚡
+                    </button>
+                  )}
+                  {isArchived ? (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      onClick={() => dispatch('to_bot')}
+                      disabled={updating}
+                      title="Reabrir conversación"
+                    >
+                      ↩
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      onClick={() => dispatch('bot_archive')}
+                      disabled={updating}
+                      title="Archivar conversación"
+                    >
+                      ✓
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={`${styles.iconBtn} ${styles.profileToggleBtn}`}
                     onClick={() => setShowMobileProfile(v => !v)}
                     title="Ver perfil del cliente"
                   >
                     👤
                   </button>
-                  {isArchived ? (
-                    <button className={`${styles.actionBtn} ${styles.actionReopen}`} onClick={() => dispatch('to_bot')} disabled={updating}>
-                      ↩ Reabrir
-                    </button>
-                  ) : (
-                    <button
-                      className={`${styles.actionBtn} ${styles.actionResolve}`}
-                      onClick={() => dispatch('bot_archive')}
-                      disabled={updating}
-                      title="Archivar conversación"
-                    >
-                      ✓ Archivar
-                    </button>
-                  )}
                 </div>
               </div>
 
-              {/* Row 2: badges + dispatch actions */}
-              <div className={styles.threadHeaderBottom}>
-                <div className={styles.threadHeaderBadges}>
+              <div className={styles.labelsRow}>
+                {/* Canal, estado y asignado (como el panel de siempre de Alto) */}
+                <span className={styles.threadHeaderBadges}>
                   <ChannelBadge channel={selected.channel} />
                   <StatusChip status={currentStatus} />
                   {selected.assignedTo && <AgentBadge assignedTo={selected.assignedTo} nameMap={nameMap} />}
-                </div>
-
+                </span>
+                {(selected.labels ?? []).map(l => (
+                  <LabelChip key={l} label={l} labelMap={labelMap} onRemove={!isArchived ? removeLabel : null} />
+                ))}
                 {!isArchived && (
-                  <div className={styles.dispatchActions}>
+                  <div className={styles.labelAddWrap}>
                     <button
-                      className={`${styles.dispatchBtn} ${styles.dispatchBotBtn} ${!isHuman && currentStatus === 'bot' ? styles.dispatchBtnActive : ''}`}
-                      onClick={() => dispatch('to_bot')}
-                      disabled={updating}
-                      title="Enviar al Bot"
+                      className={styles.labelAddBtn}
+                      onClick={() => setLabelDropOpen(v => !v)}
+                      title="Agregar etiqueta"
                     >
-                      🤖 Bot
+                      + Etiqueta
                     </button>
-
-                    {/* Take over button: visible when bot is handling the conv */}
-                    {!isHuman && currentStatus === 'bot' && (
-                      <button
-                        className={styles.takeOverBtn}
-                        onClick={() => dispatch('take_over', { agentId: myId })}
-                        disabled={updating}
-                        title="Tomar esta conversación — el bot deja de responder"
-                      >
-                        ✋ Tomar
-                      </button>
-                    )}
-
-                    {agentsList.length > 0 && (
-                      <select
-                        className={styles.agentSelect}
-                        value=""
-                        onChange={e => { if (e.target.value) dispatch('assign_dept', { deptId: e.target.value }); }}
-                        disabled={updating}
-                        title="Derivar a agente específico"
-                      >
-                        <option value="">→ Agente...</option>
-                        {agentsList.map(a => (
-                          <option key={a.id} value={a.email}>{a.name}</option>
+                    {labelDropOpen && availableToAdd.length > 0 && (
+                      <div className={styles.labelDropdown}>
+                        {availableToAdd.map(l => (
+                          <button
+                            key={l.id}
+                            className={styles.labelDropItem}
+                            onClick={() => addLabel(l.name)}
+                          >
+                            <span className={styles.labelDropDot} style={{ background: l.color }} />
+                            {l.name}
+                          </button>
                         ))}
-                      </select>
+                      </div>
                     )}
-
-                    {/* Urgent toggle: always visible, toggles the flag */}
-                    {isUrgentFlag ? (
-                      <button
-                        className={`${styles.dispatchBtn} ${styles.dispatchUnurgentBtn}`}
-                        onClick={() => dispatch('unset_urgent')}
-                        disabled={updating}
-                        title="Quitar urgente"
-                      >
-                        ⚡ Quitar urgente
-                      </button>
-                    ) : (
-                      <button
-                        className={`${styles.dispatchBtn} ${styles.dispatchUrgentBtn}`}
-                        onClick={() => dispatch('set_urgent')}
-                        disabled={updating}
-                        title="Marcar como urgente"
-                      >
-                        ⚡ Urgente
-                      </button>
+                    {labelDropOpen && availableToAdd.length === 0 && (
+                      <div className={styles.labelDropdown}>
+                        <span className={styles.labelDropEmpty}>Sin etiquetas disponibles</span>
+                      </div>
                     )}
                   </div>
                 )}
-
-                <div className={styles.labelsRow}>
-                  {(selected.labels ?? []).map(l => (
-                    <LabelChip key={l} label={l} labelMap={labelMap} onRemove={!isArchived ? removeLabel : null} />
-                  ))}
-                  {!isArchived && (
-                    <div className={styles.labelAddWrap}>
-                      <button
-                        className={styles.labelAddBtn}
-                        onClick={() => setLabelDropOpen(v => !v)}
-                        title="Agregar etiqueta"
-                      >
-                        + Etiqueta
-                      </button>
-                      {labelDropOpen && availableToAdd.length > 0 && (
-                        <div className={styles.labelDropdown}>
-                          {availableToAdd.map(l => (
-                            <button
-                              key={l.id}
-                              className={styles.labelDropItem}
-                              onClick={() => addLabel(l.name)}
-                            >
-                              <span className={styles.labelDropDot} style={{ background: l.color }} />
-                              {l.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {labelDropOpen && availableToAdd.length === 0 && (
-                        <div className={styles.labelDropdown}>
-                          <span className={styles.labelDropEmpty}>Sin etiquetas disponibles</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
               </div>
             </div>
 
+            {/* ---- Píldora de estado: quién atiende ---- */}
+            <div className={styles.statePillWrap}>
+              {isArchived ? (
+                <div className={`${styles.statePill} ${styles.statePillMuted}`}>
+                  <span>{selectedPill.text === 'Resuelta' ? 'Conversación resuelta' : 'Conversación archivada'}</span>
+                </div>
+              ) : selectedPill.tone === 'bot' ? (
+                <div className={styles.statePill}>
+                  <BotFace size={22} />
+                  <span>Responde <b>{botName}</b></span>
+                  <button
+                    type="button"
+                    className={styles.statePillBtn}
+                    onClick={() => dispatch('take_over', { agentId: myId })}
+                    disabled={updating}
+                    title="Tomar esta conversación — el bot deja de responder"
+                  >
+                    Intervenir
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.statePill}>
+                  {selectedPill.tone === 'agent' ? (
+                    <span>Lo atiende <b>{selectedPill.text}</b> · {botName} está en pausa</span>
+                  ) : (
+                    <span><b className={styles.statePillWait}>{selectedPill.text}</b> · {botName} está en pausa</span>
+                  )}
+                  <button
+                    type="button"
+                    className={styles.statePillBtn}
+                    onClick={() => dispatch('to_bot')}
+                    disabled={updating}
+                    title="Enviar al Bot"
+                  >
+                    Devolver a {botName}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {chatSearchOpen && (
+              <div className={styles.chatSearchBar}>
+                <input
+                  className={styles.searchInput}
+                  placeholder="Buscar en este chat…"
+                  value={chatSearch}
+                  onChange={e => setChatSearch(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); stepChatSearch(e.shiftKey ? 1 : -1); }
+                    if (e.key === 'Escape') closeChatSearch();
+                  }}
+                  autoFocus
+                />
+                <span className={styles.chatSearchCount}>
+                  {chatSearch.trim()
+                    ? (chatSearchMatches.length ? `${chatSearchCurrentPos + 1} de ${chatSearchMatches.length}` : 'Sin resultados')
+                    : ''}
+                </span>
+                <button type="button" className={styles.chatSearchNav} onClick={() => stepChatSearch(-1)} disabled={!chatSearchMatches.length} title="Anterior (Enter)">↑</button>
+                <button type="button" className={styles.chatSearchNav} onClick={() => stepChatSearch(1)} disabled={!chatSearchMatches.length} title="Siguiente (Shift+Enter)">↓</button>
+                <button type="button" className={styles.chatSearchNav} onClick={closeChatSearch} title="Cerrar búsqueda">✕</button>
+              </div>
+            )}
+
             <div
-              className={styles.messages}
+              className={`${styles.messages} ${dragOver ? styles.messagesDragOver : ''}`}
               ref={messagesContainerRef}
               onScroll={handleMessagesScroll}
+              onDragOver={handleDragOver}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
             >
               {messages.length === 0 ? (
-                <p className={styles.noMessages}>Sin mensajes aún.</p>
+                <p className={styles.noMessages}>{messagesLoading ? 'Cargando mensajes…' : 'Sin mensajes aún.'}</p>
               ) : (
-                messages.map((msg, i) => {
+                timeline.map(item => {
+                  if (item.kind === 'day') {
+                    return <div key={item.key} className={styles.daySep}>{item.label}</div>;
+                  }
+                  if (item.kind === 'handoff') {
+                    return <div key={item.key} className={styles.handoffNotice}>{item.text}</div>;
+                  }
+                  const { msg, index: i } = item;
                   const canRetry = msg.role === 'admin' && msg.msgStatus === 'error'
                     && msg.content?.trim() && !msg.mediaType
                     && !msg.content.startsWith('[Plantilla:');
+                  const key = msgKey(msg, i);
                   return (
                     <MessageBubble
-                      key={i}
+                      key={key}
                       msg={msg}
+                      msgIndex={i}
+                      rootRef={el => { if (el) messageRefs.current[i] = el; else delete messageRefs.current[i]; }}
                       onRetry={canRetry ? handleRetry : null}
                       onQuote={isHuman ? setReplyingTo : null}
+                      onForward={() => startForwardSelection(key)}
                       contactId={selected.id}
+                      nameMap={nameMap}
+                      searchQuery={chatSearchOpen ? chatSearch : ''}
+                      isCurrentMatch={i === chatSearchCurrentMsg}
+                      selectMode={selectMode}
+                      isSelected={selectedKeys.includes(key)}
+                      onToggleSelect={() => toggleSelectedKey(key)}
                     />
                   );
                 })
               )}
-              <div ref={messagesEndRef} />
+              {dragOver && <div className={styles.dropHint}>Soltá el archivo para adjuntarlo</div>}
             </div>
 
             {/* Footer: depends on conversation state */}
-            {isArchived ? (
+            {selectMode ? (
+              <div className={styles.selectionBar}>
+                <button type="button" className={styles.selectionCancel} onClick={cancelSelection} title="Cancelar">✕</button>
+                <span className={styles.selectionCount}>
+                  {selectedKeys.length} seleccionado{selectedKeys.length === 1 ? '' : 's'}
+                </span>
+                <button
+                  type="button"
+                  className={styles.replyBtn}
+                  onClick={openForwardModal}
+                  disabled={!selectedKeys.length}
+                >
+                  ↪ Reenviar
+                </button>
+              </div>
+            ) : isArchived ? (
               <div className={styles.archivedBanner}>
                 <span>Conversación archivada</span>
                 <button
@@ -1295,7 +2111,7 @@ export default function Conversations() {
                   <div className={styles.replyingToBar}>
                     <div className={styles.replyingToText}>
                       <span className={styles.msgReplyQuoteFrom}>
-                        Respondiendo a {REPLY_ROLE_LABELS[replyingTo.role] ?? ''}
+                        Respondiendo a {replyRoleLabel(replyingTo.role, botName)}
                       </span>
                       <span className={styles.msgReplyQuoteText}>{replyingTo.preview}</span>
                     </div>
@@ -1314,7 +2130,170 @@ export default function Conversations() {
                     ⚠️ El cliente no escribe hace {Math.floor(lastClientHours)}h. La ventana de WhatsApp de 24h está por cerrarse — si no responde pronto, los mensajes dejarán de llegar.
                   </div>
                 )}
+                {pendingFile ? (
+                  /* ---- Adjunto elegido: ver qué se manda + texto opcional ---- */
+                  <div className={styles.pendingFileRow}>
+                    {pendingFile.previewUrl ? (
+                      <img src={pendingFile.previewUrl} className={styles.pendingFileThumb} alt="" />
+                    ) : (
+                      <span className={styles.pendingFileIcon}>
+                        {pendingFile.file.type.startsWith('audio/') ? '🎵'
+                          : pendingFile.file.type.startsWith('video/') ? '🎬'
+                          : (DOC_ICONS[fileExt(pendingFile.file.name)] ?? '📄')}
+                      </span>
+                    )}
+                    <div className={styles.pendingFileInfo}>
+                      <span className={styles.pendingFileName}>{pendingFile.file.name}</span>
+                      <span className={styles.pendingFileSize}>{formatFileSize(pendingFile.file.size)}</span>
+                    </div>
+                    {!pendingFile.file.type.startsWith('audio/') && (
+                      <input
+                        className={styles.pendingFileCaption}
+                        placeholder="Agregar un mensaje (opcional)"
+                        value={pendingFile.caption}
+                        onChange={e => setPendingFile(prev => prev && { ...prev, caption: e.target.value })}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); sendPendingFile(); } }}
+                        disabled={sending}
+                        autoFocus
+                      />
+                    )}
+                    <button type="button" className={styles.recordDiscardBtn} onClick={discardPendingFile} disabled={sending} title="Quitar adjunto">
+                      ✕
+                    </button>
+                    <button type="button" className={styles.replyBtn} onClick={sendPendingFile} disabled={sending}>
+                      {sending ? 'Enviando…' : '📤 Enviar'}
+                    </button>
+                  </div>
+                ) : recordedAudio ? (
+                  /* ---- Preview de nota de voz grabada: escuchar antes de mandar ---- */
+                  <div className={styles.recordPreviewRow}>
+                    <audio className={styles.recordPreviewPlayer} controls src={recordedAudio.url} />
+                    <button
+                      type="button"
+                      className={styles.recordDiscardBtn}
+                      onClick={discardRecordedAudio}
+                      disabled={sending}
+                      title="Descartar grabación"
+                    >
+                      🗑 Descartar
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.replyBtn}
+                      onClick={sendRecordedAudio}
+                      disabled={sending}
+                    >
+                      {sending ? '...' : '📤 Enviar audio'}
+                    </button>
+                  </div>
+                ) : recording ? (
+                  /* ---- Grabando nota de voz ---- */
+                  <div className={styles.recordingRow}>
+                    <span className={styles.recordingDot} />
+                    <span className={styles.recordingTime}>Grabando… {formatRecordTime(recordSeconds)}</span>
+                    <button
+                      type="button"
+                      className={styles.recordCancelBtn}
+                      onClick={cancelRecording}
+                      title="Cancelar grabación"
+                    >
+                      ✕
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.recordStopBtn}
+                      onClick={stopRecording}
+                      title="Cortar grabación"
+                    >
+                      ⏹ Cortar
+                    </button>
+                  </div>
+                ) : (
+                <>
+                {quickReplies.length > 0 && (
+                  /* ---- Respuestas rápidas: 3 a mano + el selector completo ---- */
+                  <div className={styles.qrRow}>
+                    {quickReplies.slice(0, 3).map(qr => (
+                      <button
+                        type="button"
+                        key={qr.id}
+                        className={styles.qrChip}
+                        onClick={() => setReply(qr.text)}
+                        title={qr.text}
+                      >
+                        ⚡ {qr.title || qr.shortcut}
+                      </button>
+                    ))}
+                    <div className={styles.qrWrap}>
+                      <button
+                        type="button"
+                        className={styles.qrBtn}
+                        onClick={() => setQrOpen(v => !v)}
+                        title="Respuestas rápidas"
+                        aria-expanded={qrOpen}
+                      >
+                        ⚡ Todas ▾
+                      </button>
+                      {qrOpen && (
+                        <div className={styles.qrDropdown}>
+                          {quickReplies.map(qr => (
+                            <button
+                              type="button"
+                              key={qr.id}
+                              className={styles.qrDropItem}
+                              onClick={() => { setReply(qr.text); setQrOpen(false); }}
+                            >
+                              <span className={styles.qrDropTitle}>
+                                {qr.shortcut && <code className={styles.qrDropShortcut}>/{qr.shortcut}</code>}
+                                {qr.title || qr.shortcut}
+                              </span>
+                              <span className={styles.qrDropText}>{qr.text}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div className={styles.replyRow}>
+                  <div className={styles.emojiWrap}>
+                    <button
+                      type="button"
+                      className={styles.mediaBtn}
+                      onClick={() => setEmojiOpen(v => !v)}
+                      disabled={sending}
+                      title="Emojis"
+                      aria-expanded={emojiOpen}
+                    >
+                      😊
+                    </button>
+                    {emojiOpen && (
+                      <div className={styles.emojiPicker}>
+                        {EMOJIS.map(em => (
+                          <button type="button" key={em} className={styles.emojiItem} onClick={() => insertEmoji(em)}>
+                            {em}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    ref={mediaInputRef}
+                    type="file"
+                    accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    className={styles.mediaFileInput}
+                    onChange={handleMediaSelect}
+                    disabled={sending}
+                  />
+                  <button
+                    type="button"
+                    className={styles.mediaBtn}
+                    onClick={() => mediaInputRef.current?.click()}
+                    disabled={sending}
+                    title="Adjuntar imagen, video, audio o documento (PDF, Word, Excel) — también podés pegar o arrastrar"
+                  >
+                    📎
+                  </button>
                   <div className={styles.replyInputWrap}>
                     {slashSuggestions.length > 0 && (
                       <div className={styles.slashDropdown}>
@@ -1332,74 +2311,48 @@ export default function Conversations() {
                       </div>
                     )}
                     <textarea
+                      ref={replyInputRef}
                       className={styles.replyInput}
-                      rows={2}
-                      placeholder="Escribí tu respuesta... (Enter para enviar)"
+                      rows={1}
+                      placeholder="Escribí un mensaje (Enter para enviar)"
                       value={reply}
                       onChange={e => setReply(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply(e); } }}
+                      onPaste={handlePaste}
                       disabled={sending}
                       spellCheck="true"
                       lang="es"
                     />
-                    {quickReplies.length > 0 && (
-                      <div className={styles.qrWrap}>
-                        <button
-                          type="button"
-                          className={styles.qrBtn}
-                          onClick={() => setQrOpen(v => !v)}
-                          title="Respuestas rápidas"
-                        >
-                          ⚡
-                        </button>
-                        {qrOpen && (
-                          <div className={styles.qrDropdown}>
-                            {quickReplies.map(qr => (
-                              <button
-                                type="button"
-                                key={qr.id}
-                                className={styles.qrDropItem}
-                                onClick={() => { setReply(qr.text); setQrOpen(false); }}
-                              >
-                                <span className={styles.qrDropTitle}>
-                                  {qr.shortcut && <code className={styles.qrDropShortcut}>/{qr.shortcut}</code>}
-                                  {qr.title || qr.shortcut}
-                                </span>
-                                <span className={styles.qrDropText}>{qr.text}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
-                  <input
-                    ref={mediaInputRef}
-                    type="file"
-                    accept="image/*,video/*,audio/*,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    className={styles.mediaFileInput}
-                    onChange={handleMediaSelect}
-                    disabled={sending}
-                  />
+                  {canRecord && (
+                    <button
+                      type="button"
+                      className={styles.micBtn}
+                      onClick={startRecording}
+                      disabled={sending}
+                      title="Grabar nota de voz"
+                    >
+                      🎙️
+                    </button>
+                  )}
                   <button
-                    type="button"
-                    className={styles.mediaBtn}
-                    onClick={() => mediaInputRef.current?.click()}
-                    disabled={sending}
-                    title="Enviar imagen / video / audio / documento"
+                    type="submit"
+                    className={styles.sendBtn}
+                    disabled={sending || !reply.trim()}
+                    title="Enviar"
+                    aria-label="Enviar"
                   >
-                    📎
-                  </button>
-                  <button type="submit" className={styles.replyBtn} disabled={sending || !reply.trim()}>
-                    {sending ? '...' : 'Enviar'}
+                    {sending ? '…' : '➤'}
                   </button>
                 </div>
+                </>
+                )}
               </form>
             ) : (
               /* ---- Bot is handling the conversation ---- */
               <div className={styles.botFooter}>
                 <span className={styles.botFooterDot} />
-                <span className={styles.botFooterText}>Alto está respondiendo automáticamente</span>
+                <span className={styles.botFooterText}>{botName} está respondiendo automáticamente</span>
                 <button
                   className={styles.takeOverBtn}
                   onClick={() => dispatch('take_over', { agentId: myId })}
@@ -1414,6 +2367,15 @@ export default function Conversations() {
           </>
         )}
       </main>
+
+      {forwardItems && (
+        <ForwardModal
+          items={forwardItems}
+          conversations={conversations}
+          onClose={() => setForwardItems(null)}
+          onDone={handleForwardDone}
+        />
+      )}
 
       {/* ---- Profile Panel ---- */}
       {selected && (
@@ -1436,6 +2398,25 @@ export default function Conversations() {
               {syncing ? '...' : '↻ TN'}
             </button>
           </div>
+
+          <div className={styles.profileHero}>
+            <ConvAvatar conv={selected} size={64} />
+            <span className={styles.profileHeroName}>{customer?.contactName || selected.contactName || selected.contactId}</span>
+            {customer?.firstContactAt && (
+              <span className={styles.profileHeroSince}>Cliente desde {formatMonthYear(customer.firstContactAt)}</span>
+            )}
+          </div>
+
+          {(selected.labels ?? []).length > 0 && (
+            <div className={styles.profileSection}>
+              <div className={styles.profileSectionTitle}>Etiquetas</div>
+              <div className={styles.profileLabels}>
+                {selected.labels.map(l => (
+                  <LabelChip key={l} label={l} labelMap={labelMap} onRemove={!isArchived ? removeLabel : null} />
+                ))}
+              </div>
+            </div>
+          )}
 
           {customer ? (
             <>
@@ -1514,7 +2495,7 @@ export default function Conversations() {
                   </button>
                 </div>
                 {summary ? (
-                  <>
+                  <div className={styles.summaryBox}>
                     <p className={styles.summaryText}>{summary.text}</p>
                     <div className={styles.summaryMetrics}>
                       <span className={styles.metricChip}>💬 {summary.metrics?.totalMessages ?? '?'} msgs</span>
@@ -1533,7 +2514,7 @@ export default function Conversations() {
                         Generado {formatDate(summary.generatedAt)}
                       </span>
                     )}
-                  </>
+                  </div>
                 ) : (
                   <p className={styles.profileEmpty}>
                     {summaryGenerating ? 'Generando resumen...' : 'Sin resumen. Hacé click en "Generar".'}

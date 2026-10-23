@@ -163,6 +163,13 @@ describe('buildTimeline', () => {
     expect(tl[4].index).toBe(2);
   });
 
+  it('mensajes de Alto: el nombre sale de agentName (o de agentEmail vía nameMap)', () => {
+    const alto = (c, extra) => ({ role: 'admin', content: c, timestamp: '2026-10-20T13:02:00Z', ...extra });
+    expect(handoffs([b('y'), alto('z', { agentName: 'Mica', agentEmail: 'm@altorancho.com' })])).toEqual(['Mica tomó la conversación']);
+    expect(handoffs([b('y'), alto('z', { agentEmail: 'j@altorancho.com' })])).toEqual(['Joaquín tomó la conversación']);
+    expect(handoffs([b('y'), alto('z', {})])).toEqual(['Alguien del equipo tomó la conversación']);
+  });
+
   it('entre agentes no hay aviso: solo cambia el tipo bot ⇄ agente', () => {
     const map2 = { ...nameMap, 'm@altorancho.com': 'Mica' };
     const tl = buildTimeline([a('uno'), a('dos', 'm@altorancho.com'), a('tres', 'desconocido@x.com'), a('cuatro', null)], { botName: 'Alto', nameMap: map2 });
