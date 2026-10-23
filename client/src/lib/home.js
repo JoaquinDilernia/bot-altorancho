@@ -101,3 +101,20 @@ export function shouldFetchWeek(lastFetchedMs, nowMs, { force = false } = {}) {
   if (force || lastFetchedMs == null) return true;
   return nowMs - lastFetchedMs >= WEEK_REFRESH_MS;
 }
+
+/**
+ * Variación de "1ª respuesta" en el mismo formato que el valor (ambos en
+ * minutos): "+45 min", "-1 h 5 min"; por debajo de 1 min en segundos ("+30s").
+ * null si falta alguno de los dos.
+ */
+export function firstResponseDelta(currMin, prevMin) {
+  if (currMin == null || !prevMin) return null;
+  const diff = currMin - prevMin;
+  const abs = Math.abs(diff);
+  const sign = diff > 0 ? '+' : diff < 0 ? '-' : '';
+  if (abs < 1) {
+    const s = Math.round(abs * 60);
+    return s === 0 ? '0 min' : `${sign}${s}s`;
+  }
+  return `${sign}${fmt(abs)}`;
+}

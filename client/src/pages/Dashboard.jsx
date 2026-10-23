@@ -7,8 +7,8 @@ import BotFace from '../components/ui/BotFace';
 import Skeleton from '../components/ui/Skeleton';
 import { useCountUp } from '../hooks/useCountUp';
 import { useFirstLoad } from '../hooks/useFirstLoad';
-import { waitLevel, avatarColor, initials, pillFor } from '../lib/conversationView';
-import { tediSummary, waitingQueue, activityFeed, kpiDelta, fmt, relTime, shouldFetchWeek } from '../lib/home';
+import { waitLevel, avatarColor, initials, pillFor, mergeWaiting } from '../lib/conversationView';
+import { tediSummary, waitingQueue, activityFeed, kpiDelta, fmt, relTime, shouldFetchWeek, firstResponseDelta } from '../lib/home';
 import styles from './Dashboard.module.css';
 
 const TYPING_MS = 800;
@@ -87,10 +87,12 @@ export default function Dashboard() {
     setRefreshing(true);
     try {
       const withWeek = shouldFetchWeek(weekFetchedAtRef.current, Date.now(), { force });
-      const [dayRes, weekRes, convsRes, areasRes, usersRes] = await Promise.all([
+      const [dayRes, weekRes, convsRes, waitingRes, areasRes, usersRes] = await Promise.all([
         authFetch(BASE_URL + '/api/stats?period=day'),
         withWeek ? authFetch(BASE_URL + '/api/stats?period=week') : null,
         authFetch(BASE_URL + '/api/conversations'),
+        // las que esperan fuera de las 200 más recientes (misma lista que Conversaciones)
+        authFetch(BASE_URL + '/api/conversations/waiting').catch(() => null),
         authFetch(BASE_URL + '/api/departments').catch(() => null),
         authFetch(BASE_URL + '/api/auth/users').catch(() => null),
       ]);
@@ -110,7 +112,8 @@ export default function Dashboard() {
         setWeek(weekData);
         weekFetchedAtRef.current = Date.now();
       }
-      setConvs(convsData.conversations ?? []);
+      const waitingData = waitingRes?.ok ? await waitingRes.json() : { conversations: [] };
+      setConvs(mergeWaiting(convsData.conversations ?? [], waitingData.conversations ?? []));
       setError(false);
     } catch {
       setError(true);
@@ -152,7 +155,8 @@ export default function Dashboard() {
 
   const convDelta = kpiDelta(stats?.total, prev.total);
   const rateDelta = prev.botResolutionRate ? rate - prev.botResolutionRate : null;
-  const firstDeltaSec = first != null && prev.avgFirstResponseMin ? Math.round((first - prev.avgFirstResponseMin) * 60) : null;
+  const firstDelta = firstResponseDelta(first, prev.avgFirstResponseMin);
+  const firstWorse = first != null && prev.avgFirstResponseMin ? first > prev.avgFirstResponseMin : false;
 
   const firstLabel = first == null ? '—' : first < 1 ? `${Math.round(first * 60)}s` : fmt(first);
 
@@ -169,7 +173,7 @@ export default function Dashboard() {
     },
     {
       key: 'first', label: '1ª respuesta', text: firstLabel, color: 'var(--brand)',
-      delta: firstDeltaSec === null ? null : signed(firstDeltaSec, 's'), good: (firstDeltaSec ?? 0) <= 0,
+      delta: firstDelta, good: !firstWorse,
       series: null,
     },
     {
