@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { BrandProvider } from './contexts/BrandContext';
 import { setLogoutHandler } from './lib/api';
 import Layout from './components/Layout/Layout.jsx';
 import Dashboard     from './pages/Dashboard.jsx';
@@ -25,9 +26,11 @@ import Campaigns     from './pages/Campaigns.jsx';
 export default function App() {
   return (
     <AuthProvider>
-      <HashRouter>
-        <AppRoutes />
-      </HashRouter>
+      <BrandProvider>
+        <HashRouter>
+          <AppRoutes />
+        </HashRouter>
+      </BrandProvider>
     </AuthProvider>
   );
 }

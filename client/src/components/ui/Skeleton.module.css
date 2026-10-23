@@ -1,0 +1,12 @@
+.skel {
+  background: linear-gradient(90deg, var(--soft) 25%, var(--line) 37%, var(--soft) 63%);
+  background-size: 400% 100%;
+  animation: skShimmer 1.2s infinite;
+}
+@keyframes skShimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel { animation: none; }
+}
