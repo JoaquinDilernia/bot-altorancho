@@ -4,7 +4,7 @@ import { getDb } from '../services/firebase.service.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 import { getBotCartStats, reconcileBotCarts } from '../services/botCart.service.js';
 import { aggregateConversations, arMidnight, fromArWallClock, toDate, isoDate, previousRange, previousTotals } from '../services/statsAggregate.js';
-import { waitingSummary, mergeById } from '../services/waiting.js';
+import { waitingSummary, mergeById, visibleTo } from '../services/waiting.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -197,7 +197,9 @@ waitingRouter.get('/', async (req, res) => {
       db.collection('bot-altorancho_agents').get(),
     ]);
     const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    res.json(waitingSummary(candidates, agents));
+    // El operador solo cuenta las que puede ver en Conversaciones.
+    const visible = candidates.filter(c => visibleTo(c, req.agent));
+    res.json(waitingSummary(visible, agents));
   } catch (err) {
     console.error('[stats/waiting]', err);
     res.status(500).json({ error: err.message });

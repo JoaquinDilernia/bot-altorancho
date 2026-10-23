@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isWaiting, agentKeySet, waitingSummary, mergeById } from './waiting.js';
+import { isWaiting, agentKeySet, waitingSummary, mergeById, visibleTo } from './waiting.js';
 
 const agents = [{ id: 'ag1', email: 'ana@altorancho.com' }];
 const keys = agentKeySet(agents);
@@ -75,4 +75,31 @@ test('escaladas + humanMode unidas sin duplicar: el legado bot/urgent con humanM
   const merged = mergeById(escalated, humanMode);
   assert.deepEqual(merged.map(c => c.id), ['e1', 'l1', 'l2']);
   assert.deepEqual(waitingSummary(merged, agents, now), { count: 2, oldestMin: 40 });
+});
+
+test('visibleTo: operador ve solo lo asignado a su departamento o email', () => {
+  const op = { role: 'operador', department: 'ventas', email: 'ana@x.com' };
+  assert.equal(visibleTo({ id: '1', assignedTo: 'ventas' }, op), true);
+  assert.equal(visibleTo({ id: '2', assignedTo: 'ana@x.com' }, op), true);
+  assert.equal(visibleTo({ id: '3', assignedTo: 'logistica' }, op), false);
+  assert.equal(visibleTo({ id: '4', assignedTo: null }, op), false);
+  assert.equal(visibleTo({ id: '5' }, { role: 'operador', email: 'ana@x.com' }), false);
+});
+
+test('visibleTo: admin y atencion_cliente ven todo', () => {
+  for (const role of ['admin', 'atencion_cliente']) {
+    assert.equal(visibleTo({ id: '1', assignedTo: 'logistica' }, { role }), true);
+    assert.equal(visibleTo({ id: '2', assignedTo: null }, { role }), true);
+  }
+});
+
+test('contador del operador: solo cuenta las esperando de su departamento', () => {
+  const op = { role: 'operador', department: 'ventas', email: 'ana@x.com' };
+  const convs = [
+    { id: 'a', status: 'escalated', assignedTo: 'ventas' },
+    { id: 'b', status: 'escalated', assignedTo: 'logistica' },
+    { id: 'c', status: 'escalated', assignedTo: null },
+  ];
+  assert.equal(waitingSummary(convs.filter(c => visibleTo(c, op)), []).count, 1);
+  assert.equal(waitingSummary(convs.filter(c => visibleTo(c, { role: 'admin' })), []).count, 3);
 });

@@ -29,6 +29,18 @@ export function isWaiting(conv, agentKeys = new Set()) {
   return true;
 }
 
+/**
+ * ¿El agente ve esta conversación en el panel? Misma regla que GET
+ * /api/conversations: un operador solo ve las asignadas a su departamento o a
+ * su email; admin / atencion_cliente ven todas.
+ */
+export function visibleTo(conv, agent) {
+  if (!conv) return false;
+  if (agent?.role !== 'operador') return true;
+  const targets = [agent.department, agent.email].filter(Boolean);
+  return targets.includes(conv.assignedTo);
+}
+
 /** Une listas de conversaciones sin repetir el mismo id (la primera gana). */
 export function mergeById(...lists) {
   const byId = new Map();

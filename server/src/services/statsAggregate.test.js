@@ -150,3 +150,17 @@ test('byStatus, byChannel y byDepartment conservan la forma de /api/stats', () =
   ]);
   assert.equal(r.byArea, undefined);
 });
+
+test('byBusinessHours usa businessHours.schedule de Config cuando existe', () => {
+  // sáb 24/10 cae fuera del rango de `opts`; uso un rango propio de 1 día
+  const satStart = Date.parse('2026-10-24T03:00:00Z');
+  const o = { startMs: satStart, endMs: satStart + DAY - 1, agents: [], departments: [],
+    botConfig: { businessHours: { enabled: true, schedule: {
+      saturday: { open: '10:00', close: '14:00', active: true },
+    } } } };
+  const convs = [
+    { id: 'a', createdAt: at('2026-10-24T14:00:00Z') }, // sáb 11:00 AR dentro
+    { id: 'b', createdAt: at('2026-10-24T19:00:00Z') }, // sáb 16:00 AR fuera
+  ];
+  assert.deepEqual(aggregateConversations(convs, o).byBusinessHours, { inside: 1, outside: 1 });
+});

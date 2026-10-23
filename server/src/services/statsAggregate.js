@@ -1,4 +1,4 @@
-import { isWithinBusinessHoursAt } from './businessHours.js';
+import { isWithinConfiguredHoursAt } from './businessHours.js';
 
 // Alto Rancho opera en Argentina (UTC-3 fijo, sin horario de verano desde 2009).
 // Los "días" de las estadísticas (períodos y desglose diario) deben calcularse
@@ -213,7 +213,7 @@ export function aggregateConversations(conversations, { startMs, endMs, agents =
       conversationsStarted++;
       dayBucket(isoDate(toDate(conv.createdAt))).started++;
       // Día vs noche: según la hora a la que se creó la conversación
-      byBusinessHours[isWithinBusinessHoursAt(toDate(conv.createdAt), botConfig) ? 'inside' : 'outside']++;
+      byBusinessHours[isWithinConfiguredHoursAt(toDate(conv.createdAt), botConfig) ? 'inside' : 'outside']++;
     }
   }
 
