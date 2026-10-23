@@ -160,9 +160,12 @@ export async function generateConversationSummary(messages) {
 }
 
 export async function generateBotResponse(userMessage, conversationHistory, context = {}) {
-  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, departments = [], tools = [], runTool = null } = context;
+  const { knowledgeBase = '', orderInfo = null, orderRef = null, stockInfo = null, productInfo = null, customerContext = null, availableLabels = [], customerTags = [], botConfig = {}, imageData = null, departments = [], tools = [], runTool = null, extraInstructions = '' } = context;
 
   const systemContent = buildSystemPrompt(botConfig, knowledgeBase, orderInfo, orderRef, stockInfo, productInfo, customerContext, availableLabels, departments, customerTags, tools.length > 0);
+  // Instrucciones por mensaje (ej: respuesta a una notificación de
+  // SimpliRoute) — van al bloque variable para no romper el caché.
+  if (extraInstructions) systemContent[1].text += extraInstructions;
   const messages = buildMessages(conversationHistory, userMessage, imageData);
 
   // Loop de tool-use (mismo patrón que ENTRENO/Selvaggio): mientras Claude
@@ -246,9 +249,11 @@ Los items marcados con 🔥 son promociones u ofertas vigentes que queremos impu
   prompt += `\n\nREGLA CRÍTICA SOBRE PEDIDOS: NUNCA inventes, sugieras ni adivines números de pedido alternativos, fechas, productos o clientes. Toda la información de pedidos que compartís tiene que venir EXCLUSIVAMENTE de la sección "INFORMACIÓN DEL PEDIDO CONSULTADO" de este prompt — si esa sección no está presente, es porque no hay datos reales, y ahí no podés afirmar ni sugerir que encontraste un pedido, aunque el número se parezca a algo mencionado antes en la conversación. Si el cliente menciona una compra y no tenés información del pedido, seguí este orden: (1) Preguntale si fue un pedido de la tienda online (web) o de uno de nuestros locales físicos (Belgrano, Las Lomas, Alcorta). (2) Si fue de un LOCAL, las compras en local TAMBIÉN tienen número de comprobante/ticket (suele empezar con "S", ej: S08121) — pedile ese número y buscalo, exactamente igual que harías con un número de pedido web. (3) Si no tiene el número a mano o sigue sin encontrarse después de buscarlo, ahí sí pedí el email con el que compró. No sugieras que "quizás es otro número". No vayas directo al email — primero siempre preguntá si fue web o local, y si es local pedí el número de comprobante antes de pedir el email.`;
   if (hasProductTools) {
     prompt += `\n\n--- LINKS DE PRODUCTOS Y CARRITO (tienda online) ---
-Tenés dos herramientas:
-- buscar_productos: busca en la tienda online por nombre y devuelve el link de cada producto y la disponibilidad web por variante, con sus ids. Usala cuando necesites el link o los ids de un producto que no esté en la sección de stock (esa sección se arma solo con el último mensaje). Armá la consulta con el contexto de toda la charla y corregí typos obvios.
+Tenés tres herramientas:
+- buscar_productos: busca en la tienda online por nombre y devuelve, por producto, su ficha (descripción con material, medidas, aclaraciones), el link y la disponibilidad web por variante, con sus ids. Usala SIEMPRE antes de decir que no tenés un dato de un producto (medidas, material, colores, qué incluye, si el precio es por una unidad o por el set): la respuesta suele estar en la ficha. Armá la consulta con el contexto de toda la charla y corregí typos obvios; si no aparece, probá con menos palabras o un sinónimo antes de rendirte.
+- consultar_stock_locales: disponibilidad de UN producto en los locales (Belgrano, Las Lomas de San Isidro, Alcorta) y en la web. Usala cuando pregunten si hay en un local, dónde verlo o si conviene ir — aunque en el mensaje no repitan el nombre del producto (sacalo de la charla). Interpretación: "Disponible" = hay; "Quedan pocos" = avisale que puede agotarse y que conviene confirmar antes de ir; "No disponible" = no hay en ese local; "Exhibido/No exhibido" = productos de exhibición, se ven en el local pero se compran online. Nunca digas cantidades y aclarale que el stock puede variar por las ventas del local. Alcorta es un stand de iluminación (Light Studio) en un shopping: se puede comprar ahí lo que tenga disponible, pero solo se ve en persona la iluminación o lo exhibido.
 - armar_carrito: arma UN link al carrito de la web con los productos ya cargados.
+Si la ficha no tiene el dato que te piden, decilo honestamente (no inventes) y recién ahí ofrecé derivar.
 Reglas:
 - Cuando recomendás o informás un producto puntual, pasá su "Link:" tal cual (nunca lo inventes ni lo armes vos). Si son varios, un link por producto.
 - [producto_id …] y [variante_id …] son de uso interno: nunca se los muestres al cliente.
@@ -355,7 +360,8 @@ function buildMessages(conversationHistory, newMessage, imageData = null) {
     const recent = conversationHistory.slice(-10);
     for (const msg of recent) {
       const role = msg.role === 'user' ? 'user' : 'assistant';
-      messages.push({ role, content: msg.content });
+      const content = msg.transcript ? `[Audio transcripto] ${msg.transcript}` : msg.content;
+      messages.push({ role, content });
     }
   }
   if (imageData) {

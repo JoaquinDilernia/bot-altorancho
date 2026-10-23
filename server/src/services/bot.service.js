@@ -32,6 +32,10 @@ import { getDb } from './firebase.service.js';
 import { toWaContactId } from './phone.js';
 import { parseCustomerTagMarkers } from './botMarkers.js';
 import { isWithinBusinessHoursAt } from './businessHours.js';
+import { formatProductSheet, pickVariantSku, productName, variantLabel, stripProductDescriptionHtml } from './productSheet.js';
+import { findSimpliContext, buildSimpliInstructions, parseAnyEscalation, SIMPLI_ESCALATE_TO, SIMPLI_DEPT_NAME } from './simpliReply.js';
+import { transcribeAudio } from './transcription.service.js';
+import { downloadMetaMedia } from './meta.service.js';
 
 // Captura números Odoo (S08121), TiendaNube (TN1999675391) y números puros.
 // El número puede venir con o sin "#" y en cualquier parte del mensaje — NO
@@ -407,7 +411,8 @@ function resolveReplyTo(history, replyToWaMsgId) {
 }
 
 async function processIncomingMessageInternal(msg) {
-  const { channel, from, text, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
+  const { channel, from, type, mediaId, mediaUrl, contactName, messageId, replyToWaMsgId } = msg;
+  let { text } = msg; // un audio transcripto pasa a ser el texto del mensaje
 
   let conversation, history, knowledgeBase, customer, availableLabels, configDoc, departments, customerTags;
   try {
@@ -510,7 +515,20 @@ async function processIncomingMessageInternal(msg) {
   }
 
   // --- Non-text type handling ---
+  // Audio: se transcribe (Whisper) y sigue el flujo normal como si fuera
+  // texto. Solo si la transcripción falla se cae al aviso de "no puedo
+  // escucharlo" de antes.
+  let audioSaved = false;
   if (type === 'audio') {
+    const transcript = await transcribeIncomingAudio({ mediaId, mediaUrl });
+    if (transcript) {
+      await appendMessage(from, { role: 'user', content: '[Audio recibido]', transcript, mediaType: 'audio', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+      text = `[Audio transcripto] ${transcript}`;
+      audioSaved = true;
+      console.log(`[bot] Audio de ${from} transcripto (${transcript.length} chars)`);
+    }
+  }
+  if (type === 'audio' && !audioSaved) {
     const prevAudios = history.filter(m => m.role === 'user' && m.mediaType === 'audio').length;
     const audioUserMsg = '[Audio recibido]';
     await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
@@ -557,7 +575,7 @@ async function processIncomingMessageInternal(msg) {
     }
     const userContent = text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]';
     await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
-  } else {
+  } else if (!audioSaved) {
     if (!text?.trim()) return;
     await appendMessage(from, { role: 'user', content: text, contactName, messageId, ...(replyTo && { replyTo }) });
   }
@@ -601,10 +619,15 @@ async function processIncomingMessageInternal(msg) {
       .catch(() => {});
   }
 
+  // ¿Está contestando una notificación de SimpliRoute? (ver simpliReply.js)
+  const simpliCtx = channel === 'whatsapp' ? findSimpliContext(history) : null;
+  if (simpliCtx) console.log(`[bot] ${from} responde a la plantilla ${simpliCtx.templateName} (pedido #${simpliCtx.orderNumber ?? '-'})`);
+
   console.log(`[bot] Llamando a Claude para ${from}`);
   let botReply;
   try {
     botReply = await generateBotResponse(text ?? '', history, {
+      extraInstructions: buildSimpliInstructions(simpliCtx),
       knowledgeBase,
       orderInfo: orderContext.orderInfo,
       orderRef: orderContext.orderRef,
@@ -631,7 +654,11 @@ async function processIncomingMessageInternal(msg) {
   }
   console.log(`[bot] Claude respondió (${botReply.length} chars) para ${from}`);
 
-  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
+  // Respuesta a SimpliRoute: cualquier derivación va a Logística (aunque el
+  // depto esté inactivo y el resto se fuerce a Atención) — pedido del negocio.
+  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = simpliCtx
+    ? { ...parseAnyEscalation(botReply), assignTo: SIMPLI_ESCALATE_TO }
+    : parseEscalationMarker(botReply, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
   const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
@@ -692,7 +719,8 @@ async function processIncomingMessageInternal(msg) {
     console.log(`[bot] Escalando ${from} → agente: ${assignTo ?? 'sin asignar'}`);
 
     // Mensaje automático al cliente informando la derivación
-    const deptName = departments.find(d => d.id === assignTo)?.name ?? 'Atención al cliente';
+    const deptName = (simpliCtx ? SIMPLI_DEPT_NAME : null)
+      ?? departments.find(d => d.id === assignTo)?.name ?? 'Atención al cliente';
     const escalationMsg = buildEscalationMessage(deptName, botConfig);
     if (escalationMsg) {
       try {
@@ -857,20 +885,90 @@ export const CART_TOOL = {
   },
 };
 
-const BOT_TOOLS = [PRODUCT_SEARCH_TOOL, CART_TOOL];
+// Stock en los locales físicos (Odoo). Antes solo se consultaba si el último
+// mensaje traía palabras como "stock"/"tienen" y tomaba el primer producto de
+// la búsqueda — un "¿y en Belgrano?" sin repetir el nombre no consultaba nada.
+export const STORE_STOCK_TOOL = {
+  name: 'consultar_stock_locales',
+  description: 'Consulta la disponibilidad de UN producto en los locales físicos de Alto Rancho (Belgrano, Las Lomas de San Isidro, Alcorta) según el sistema de stock, más la disponibilidad web. Usala cuando pregunten si hay en un local, dónde verlo o comprarlo en persona, o si conviene ir. Pasá producto_id tal como vino de buscar_productos y, si el cliente eligió color/medida, la variante_id; si todavía no tenés el id, pasá consulta con el nombre.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      producto_id: { type: 'integer' },
+      variante_id: { type: 'integer', description: 'La variante elegida (color/medida), si la hay' },
+      consulta: { type: 'string', description: 'Nombre del producto, solo si no tenés producto_id' },
+    },
+  },
+};
+
+const BOT_TOOLS = [PRODUCT_SEARCH_TOOL, CART_TOOL, STORE_STOCK_TOOL];
 const TOOL_PRODUCT_LIMIT = 10;
+
+// WhatsApp manda el mediaId; Instagram, una URL directa. null si no se pudo
+// transcribir o el audio vino vacío (el llamador cae al aviso de antes).
+async function transcribeIncomingAudio({ mediaId, mediaUrl }) {
+  try {
+    let buffer, mimeType;
+    if (mediaId) {
+      ({ buffer, mimeType } = await downloadMetaMedia(mediaId));
+    } else if (mediaUrl) {
+      const axios = (await import('axios')).default;
+      const res = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+      buffer = Buffer.from(res.data);
+      mimeType = res.headers['content-type'] || 'audio/mp4';
+    } else {
+      return null;
+    }
+    const transcript = String(await transcribeAudio(buffer, mimeType) ?? '').trim();
+    return transcript || null;
+  } catch (err) {
+    console.error('[bot] No se pudo transcribir el audio:', err.response?.data ?? err.message);
+    return null;
+  }
+}
+
+async function runStoreStockTool(input) {
+  let product = null;
+  if (input?.producto_id) product = await getProductById(input.producto_id).catch(() => null);
+  if (!product) {
+    const consulta = String(input?.consulta ?? '').trim();
+    if (!consulta && !input?.producto_id) return { error: 'Falta producto_id o consulta' };
+    if (consulta) product = (await searchProducts(consulta))[0] ?? null;
+  }
+  if (!product) return { resultado: 'No encontré ese producto en la tienda. Pedile al cliente que te pase el nombre exacto o el link.' };
+
+  const name = productName(product);
+  const web = formatWebStock(product);
+  const picked = pickVariantSku(product, input?.variante_id ?? null);
+  if (!picked) {
+    return { resultado: `Producto: ${name}\nEste producto no tiene código cargado, así que no puedo ver el stock de los locales (solo el web).${web ? `\n\n${web}` : ''}` };
+  }
+  const stockResult = await getStockBySku(picked.sku);
+  const label = variantLabel(picked.variant);
+  const store = formatStockInfo(label ? `${name} (${label})` : name, picked.sku, stockResult);
+  return { resultado: web ? `${store}\n\n${web}` : store };
+}
 
 export async function runBotTool(name, input, { contactId = null } = {}) {
   if (name === 'armar_carrito') return buildAndRecordCart(input?.productos, contactId);
+  if (name === 'consultar_stock_locales') return runStoreStockTool(input);
   if (name !== 'buscar_productos') return { error: `Herramienta desconocida: ${name}` };
   const consulta = String(input?.consulta ?? '').trim();
   if (!consulta) return { error: 'Falta la consulta' };
 
   const products = await searchProducts(consulta);
   if (!products.length) return { resultado: `No se encontraron productos para "${consulta}".` };
-  const nameOf = p => (typeof p.name === 'string' ? p.name : (p.name?.es ?? p.name?.en ?? Object.values(p.name ?? {})[0] ?? 'Producto'));
+  // La ficha (descripción con material/medidas) va con cada resultado: sin
+  // ella el bot contestaba "fijate en la web" a preguntas de medidas o
+  // material y terminaba derivando. Más corta si hay muchos resultados.
+  const maxDesc = products.length > 3 ? 800 : 1500;
   const blocks = products.slice(0, TOOL_PRODUCT_LIMIT)
-    .map(p => { const web = formatWebStock(p); return web ? `Producto: ${nameOf(p)}\n${web}` : null; })
+    .map(p => {
+      const web = formatWebStock(p);
+      if (!web) return null;
+      const sheet = formatProductSheet(p, { maxDesc });
+      return `Producto: ${productName(p)}\n${sheet ? `${sheet}\n` : ''}${web}`;
+    })
     .filter(Boolean);
   const more = products.length > TOOL_PRODUCT_LIMIT
     ? `\n\n(Hay ${products.length - TOOL_PRODUCT_LIMIT} producto(s) más; si busca algo puntual, pedile que lo precise.)`
@@ -940,17 +1038,6 @@ async function resolveStockContext(text) {
     console.error('[bot] resolveStockContext error:', err.message);
     return null;
   }
-}
-
-// Quita el <link> de Google Fonts y las etiquetas HTML que TiendaNube guarda
-// en la descripción del producto, dejando texto plano legible para el prompt.
-function stripProductDescriptionHtml(html) {
-  return html
-    .replace(/<link[^>]*>/gi, '')
-    .replace(/<\/?(p|div|li|h[1-6])[^>]*>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\n{2,}/g, '\n')
-    .trim();
 }
 
 /**
