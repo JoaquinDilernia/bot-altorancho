@@ -115,7 +115,7 @@ router.post('/start', async (req, res) => {
     }
 
     if (createdBy) {
-      await dispatchConversation(normalizedPhone, { status: 'escalated', humanMode: true, assignedTo: createdBy });
+      await dispatchConversation(normalizedPhone, { status: 'escalated', humanMode: true, assignedTo: createdBy, escalationReason: 'equipo_inicio' });
       await createLabel('Chat creado', '#3b82f6').catch(() => {});
       await addLabelToConversation(normalizedPhone, 'Chat creado');
     }
@@ -224,7 +224,7 @@ router.patch('/:contactId/dispatch', async (req, res) => {
     // take_over: assign to the requesting agent
     if (action === 'take_over') {
       if (!agentId) return res.status(400).json({ error: 'agentId requerido para take_over' });
-      const patch = { status: 'escalated', humanMode: true, assignedTo: agentId };
+      const patch = { status: 'escalated', humanMode: true, assignedTo: agentId, escalationReason: 'equipo_toma' };
       await dispatchConversation(req.params.contactId, patch);
       return res.json({ ok: true, ...patch });
     }
@@ -233,7 +233,7 @@ router.patch('/:contactId/dispatch', async (req, res) => {
     if (action === 'assign_dept') {
       const { deptId } = req.body;
       if (!deptId) return res.status(400).json({ error: 'deptId requerido' });
-      const patch = { status: 'escalated', humanMode: true, assignedTo: deptId };
+      const patch = { status: 'escalated', humanMode: true, assignedTo: deptId, escalationReason: 'equipo_toma' };
       await dispatchConversation(req.params.contactId, patch);
       return res.json({ ok: true, ...patch });
     }
@@ -321,7 +321,7 @@ router.post('/:contactId/reply', async (req, res) => {
     // directo la reabre — si no, queda invisible en Archivados mientras la
     // charla sigue (ver docs/superpowers/specs/2026-08-11-fix-reapertura-archivados-design.md)
     if (status === 'resolved' || status === 'bot_archived') {
-      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email, escalationReason: 'equipo_inicio' });
     }
 
     // Generate a local message ID for tracking delivery status
@@ -426,7 +426,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     // Mismo criterio que en /reply: mandar un archivo a una conversación
     // archivada la reabre, en vez de dejarla invisible en Archivados.
     if (status === 'resolved' || status === 'bot_archived') {
-      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+      await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email, escalationReason: 'equipo_inicio' });
     }
 
     const { buffer, mimetype, originalname } = req.file;
@@ -638,7 +638,7 @@ router.post('/forward', async (req, res) => {
 
       // Mismo criterio que /reply: escribirle a una archivada la reabre.
       if (sentCount > 0 && (status === 'resolved' || status === 'bot_archived')) {
-        await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email });
+        await dispatchConversation(contactId, { status: 'escalated', humanMode: true, assignedTo: req.agent.email, escalationReason: 'equipo_inicio' });
       }
       results.push({ contactId, name, ok: !firstError, sent: sentCount, ...(firstError && { error: firstError }) });
     }

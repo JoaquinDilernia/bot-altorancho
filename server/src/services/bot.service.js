@@ -1,3 +1,4 @@
+import { parseReasonMarker } from './escalationReasons.js';
 import { generateBotResponse } from './claude.service.js';
 import { getKnowledgeBasePrompt, getKnowledgeItemByTitle } from './knowledge.service.js';
 import {
@@ -656,9 +657,10 @@ async function processIncomingMessageInternal(msg) {
 
   // Respuesta a SimpliRoute: cualquier derivación va a Logística (aunque el
   // depto esté inactivo y el resto se fuerce a Atención) — pedido del negocio.
+  const { reason: escalationReason, detail: escalationDetail, cleanText: textAfterReason } = parseReasonMarker(botReply);
   const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = simpliCtx
-    ? { ...parseAnyEscalation(botReply), assignTo: SIMPLI_ESCALATE_TO }
-    : parseEscalationMarker(botReply, departments);
+    ? { ...parseAnyEscalation(textAfterReason), assignTo: SIMPLI_ESCALATE_TO }
+    : parseEscalationMarker(textAfterReason, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
   const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
@@ -715,6 +717,8 @@ async function processIncomingMessageInternal(msg) {
       status: 'escalated',
       humanMode: true,
       assignedTo: assignTo ?? null,
+      escalationReason: escalationReason ?? 'otro',
+      escalationDetail,
     });
     console.log(`[bot] Escalando ${from} → agente: ${assignTo ?? 'sin asignar'}`);
 
@@ -789,7 +793,8 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
     runTool: (name, input) => runBotTool(name, input, { contactId: from }),
   });
 
-  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(botReply, departments);
+  const { reason: escalationReason, detail: escalationDetail, cleanText: textAfterReason } = parseReasonMarker(botReply);
+  const { shouldEscalate, assignTo, cleanText: textAfterEscalation } = parseEscalationMarker(textAfterReason, departments);
   const { shouldClose, cleanText: textAfterClose } = parseCloseMarker(textAfterEscalation);
   const { labels: botLabels, newLabels: botNewLabels, cleanText: textAfterLabels } = parseLabelMarkers(textAfterClose);
   const { tags: botTags, newTags: botNewTags, cleanText: textAfterTags } = parseCustomerTagMarkers(textAfterLabels);
@@ -817,7 +822,7 @@ export async function reprocessStuckConversation(from, { delayNote = null } = {}
   }
 
   if (shouldEscalate) {
-    await dispatchConversation(from, { status: 'escalated', humanMode: true, assignedTo: assignTo ?? null });
+    await dispatchConversation(from, { status: 'escalated', humanMode: true, assignedTo: assignTo ?? null, escalationReason: escalationReason ?? 'otro', escalationDetail });
     const deptName = departments.find(d => d.id === assignTo)?.name ?? 'Atención al cliente';
     const escalationMsg = buildEscalationMessage(deptName, botConfig);
     if (escalationMsg) {
