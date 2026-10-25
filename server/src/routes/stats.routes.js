@@ -134,6 +134,7 @@ router.get('/', async (req, res) => {
       labelCounts: current.labelCounts,
       dailyTrend: current.dailyTrend,
       byBusinessHours: current.byBusinessHours,
+      byReason: current.byReason,
       previous: previousTotals(prev),
     });
   } catch (err) {
