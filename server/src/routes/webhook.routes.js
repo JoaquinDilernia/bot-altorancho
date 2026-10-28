@@ -12,6 +12,23 @@ import { toWaContactId } from '../services/phone.js';
 
 const router = Router();
 
+// Para cuentas con rol en la app, Meta puede mandar el mismo DM de Instagram
+// por las dos suscripciones (la de la página de Facebook y la de la app de
+// Instagram) — sin esto el bot contestaría dos veces.
+const recentIgMessageIds = new Map();
+const IG_DEDUP_TTL_MS = 10 * 60 * 1000;
+
+function isDuplicateInstagramMessage(messageId) {
+  if (!messageId) return false;
+  const now = Date.now();
+  for (const [id, seenAt] of recentIgMessageIds) {
+    if (now - seenAt > IG_DEDUP_TTL_MS) recentIgMessageIds.delete(id);
+  }
+  if (recentIgMessageIds.has(messageId)) return true;
+  recentIgMessageIds.set(messageId, now);
+  return false;
+}
+
 router.get('/', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -81,6 +98,7 @@ router.post('/', async (req, res) => {
       }
     } else if (object === 'instagram') {
       const msg = parseInstagramMessage(body);
+      if (msg && isDuplicateInstagramMessage(msg.messageId)) return;
       if (msg) {
         console.log(`[webhook] IG entrante de ${msg.from}: ${msg.text?.substring(0, 50)}`);
         await processIncomingMessage(msg);
