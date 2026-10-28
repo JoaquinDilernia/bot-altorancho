@@ -2,7 +2,10 @@ import axios from 'axios';
 import crypto from 'crypto';
 import sharp from 'sharp';
 
+import { hasInstagramLoginToken, getInstagramToken } from './instagramToken.service.js';
+
 const META_API_URL = 'https://graph.facebook.com/v20.0';
+const INSTAGRAM_API_URL = 'https://graph.instagram.com/v24.0';
 // Límite real de WhatsApp Cloud API para mensajes de imagen (no está
 // documentado en el multer del router, que acepta hasta 16MB para poder
 // cubrir video/audio/documento — sin este recompresión, una foto de celular
@@ -35,15 +38,17 @@ async function postWithSafeRetry(url, data, config) {
   throw lastErr;
 }
 
+// Los webhooks de WhatsApp vienen firmados con el secreto de la app de
+// Facebook; los de Instagram (inicio de sesión con Instagram), con el secreto
+// de la app de Instagram, que es otro (META_IG_APP_SECRET).
 export function verifyWebhookSignature(rawBody, signature) {
-  if (!signature || !process.env.META_APP_SECRET) return false;
-
-  const expected = `sha256=${crypto
-    .createHmac('sha256', process.env.META_APP_SECRET)
-    .update(rawBody)
-    .digest('hex')}`;
-
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  if (!signature) return false;
+  const secrets = [process.env.META_APP_SECRET, process.env.META_IG_APP_SECRET].filter(Boolean);
+  return secrets.some(secret => {
+    const expected = `sha256=${crypto.createHmac('sha256', secret).update(rawBody).digest('hex')}`;
+    return expected.length === signature.length
+      && crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  });
 }
 
 // Returns WA message ID on success, null if tokens not configured.
@@ -155,7 +160,20 @@ async function resolveInstagramPage() {
   return igPageCache;
 }
 
+// Con META_IG_ACCESS_TOKEN se usa la API de Instagram con inicio de sesión
+// con Instagram (graph.instagram.com) — es la que tiene acceso avanzado y
+// llega a cualquier cliente. Sin él, queda el flujo viejo vía página de
+// Facebook, que solo funciona con cuentas que tienen rol en la app.
 export async function sendInstagramMessage(recipientId, text) {
+  if (hasInstagramLoginToken()) {
+    const token = await getInstagramToken();
+    const { data } = await postWithSafeRetry(
+      `${INSTAGRAM_API_URL}/me/messages`,
+      { recipient: { id: recipientId }, message: { text } },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    return data.message_id ?? null;
+  }
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_IG_PAGE_ID) {
     console.log('[meta] sendInstagramMessage skipped — tokens not configured');
     return null;

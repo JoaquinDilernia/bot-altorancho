@@ -71,6 +71,11 @@ cron.schedule('*/10 * * * *', () => {
   sendPaymentReminders().catch(err => console.error('[cron] payment reminder error:', err.message));
 });
 
+// Token de Instagram (dura 60 días): se renueva solo, 1 vez por semana.
+cron.schedule('30 3 * * *', () => {
+  refreshInstagramTokenIfNeeded().catch(err => console.error('[cron] ig token refresh error:', err.response?.data?.error?.message ?? err.message));
+});
+
 // Sync masivo de contactos desde Tienda Nube, 1 vez al día (4am) — mantiene
 // montos gastados / cantidad de pedidos / última compra al día para segmentar.
 cron.schedule('0 4 * * *', () => {
