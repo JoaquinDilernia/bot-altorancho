@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/requireAuth.js';
 import { getBotCartStats, reconcileBotCarts } from '../services/botCart.service.js';
 import { aggregateConversations, arMidnight, fromArWallClock, toDate, isoDate, previousRange, previousTotals } from '../services/statsAggregate.js';
 import { waitingSummary, mergeById, visibleTo } from '../services/waiting.js';
+import { getWaitingCandidateDocs } from '../services/conversation.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -12,14 +13,12 @@ router.use(requireAuth);
 // Candidatas a "esperando": escaladas + legado 'bot'/'urgent' con humanMode
 // (isWaiting filtra). La usan /api/stats y /api/stats/waiting, así el
 // contador del menú es siempre igual a awaitingAgent.
-async function fetchWaitingCandidates(db) {
-  const [escalatedSnap, humanModeSnap] = await Promise.all([
-    db.collection('bot-altorancho_conversations').where('status', '==', 'escalated').get(),
-    db.collection('bot-altorancho_conversations').where('humanMode', '==', true).get(),
-  ]);
+// Sale de memoria (listeners de conversation.service), no relee Firestore.
+async function fetchWaitingCandidates() {
+  const [escalatedDocs, humanModeDocs] = await getWaitingCandidateDocs();
   return mergeById(
-    escalatedSnap.docs.map(d => ({ id: d.id, ...d.data() })),
-    humanModeSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+    escalatedDocs.map(d => ({ id: d.id, ...d.data() })),
+    humanModeDocs.map(d => ({ id: d.id, ...d.data() })),
   );
 }
 
@@ -77,7 +76,7 @@ router.get('/', async (req, res) => {
       db.collection('bot-altorancho_agents').get(),
       db.collection('bot-altorancho_departments').get(),
       db.collection('bot-altorancho_conversations').where('urgent', '==', true).get(),
-      fetchWaitingCandidates(db),
+      fetchWaitingCandidates(),
       db.collection('bot-altorancho_config').doc('bot_config').get().catch(() => ({ exists: false, data: () => ({}) })),
     ]);
 
@@ -194,7 +193,7 @@ waitingRouter.get('/', async (req, res) => {
   try {
     const db = getDb();
     const [candidates, agentsSnap] = await Promise.all([
-      fetchWaitingCandidates(db),
+      fetchWaitingCandidates(),
       db.collection('bot-altorancho_agents').get(),
     ]);
     const agents = agentsSnap.docs.map(d => ({ id: d.id, ...d.data() }));

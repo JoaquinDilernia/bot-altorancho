@@ -2,6 +2,7 @@ import { getDb } from './firebase.service.js';
 import admin from 'firebase-admin';
 import { findOrder } from './tiendanube.service.js';
 import { findOdooOrder, getPartnerContact } from './odoo.service.js';
+import { createLiveQuery } from './liveQuery.js';
 
 const COLLECTION = 'bot-altorancho_conversations';
 
@@ -307,11 +308,23 @@ function mapConversationDoc(doc, data) {
   };
 }
 
-export async function listConversations(filters = {}) {
-  const db = getDb();
-  const snapshot = await db.collection(COLLECTION).orderBy('updatedAt', 'desc').limit(200).get();
+// Las tres queries que el panel repite cada pocos segundos, en memoria (ver
+// liveQuery.js). Las usan también /api/stats y /api/stats/waiting.
+const recentQuery = createLiveQuery(
+  () => getDb().collection(COLLECTION).orderBy('updatedAt', 'desc').limit(200), 'recent');
+const escalatedQuery = createLiveQuery(
+  () => getDb().collection(COLLECTION).where('status', '==', 'escalated'), 'escalated');
+const humanModeQuery = createLiveQuery(
+  () => getDb().collection(COLLECTION).where('humanMode', '==', true), 'humanMode');
 
-  let docs = snapshot.docs.map((doc) => mapConversationDoc(doc, doc.data()));
+export async function getWaitingCandidateDocs() {
+  return Promise.all([escalatedQuery.getDocs(), humanModeQuery.getDocs()]);
+}
+
+export async function listConversations(filters = {}) {
+  const recentDocs = await recentQuery.getDocs();
+
+  let docs = recentDocs.map((doc) => mapConversationDoc(doc, doc.data()));
 
   if (filters.channel) docs = docs.filter(d => d.channel === filters.channel);
   if (filters.status)  docs = docs.filter(d => d.status === filters.status);
@@ -333,13 +346,9 @@ export async function getConversationById(contactId) {
 // 200 de listConversations: una escalada vieja tiene que aparecer igual.
 // El filtro fino (isWaiting / visibleTo) lo hace quien llama.
 export async function listWaitingCandidates() {
-  const db = getDb();
-  const [escalatedSnap, humanModeSnap] = await Promise.all([
-    db.collection(COLLECTION).where('status', '==', 'escalated').get(),
-    db.collection(COLLECTION).where('humanMode', '==', true).get(),
-  ]);
+  const [escalatedDocs, humanModeDocs] = await getWaitingCandidateDocs();
   const byId = new Map();
-  for (const doc of [...escalatedSnap.docs, ...humanModeSnap.docs]) {
+  for (const doc of [...escalatedDocs, ...humanModeDocs]) {
     if (!byId.has(doc.id)) byId.set(doc.id, mapConversationDoc(doc, doc.data()));
   }
   return [...byId.values()];
