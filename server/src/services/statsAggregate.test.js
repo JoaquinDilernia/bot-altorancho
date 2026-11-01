@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregateConversations, previousTotals } from './statsAggregate.js';
+import { aggregateConversations, hadActivityInRange, previousTotals } from './statsAggregate.js';
 
 const DAY = 86400000;
 // Rango: lun 19/10 00:00 AR a mié 21/10 23:59:59.999 AR (3 días)
@@ -26,7 +26,8 @@ test('conversación creada fuera del rango no cuenta en byBusinessHours', () => 
   ];
   const r = aggregateConversations(convs, opts);
   assert.deepEqual(r.byBusinessHours, { inside: 1, outside: 0 });
-  assert.equal(r.total, 2);
+  // 'a' solo se creó antes y no tuvo movimiento en el rango: no suma al total.
+  assert.equal(r.total, 1);
   assert.equal(r.conversationsStarted, 1);
 });
 
@@ -163,4 +164,27 @@ test('byBusinessHours usa businessHours.schedule de Config cuando existe', () =>
     { id: 'b', createdAt: at('2026-10-24T19:00:00Z') }, // sáb 16:00 AR fuera
   ];
   assert.deepEqual(aggregateConversations(convs, o).byBusinessHours, { inside: 1, outside: 1 });
+});
+
+test('el período cuenta lo que pasó en él aunque la charla se haya movido después', () => {
+  // Resuelta por el bot dentro del rango; el cliente volvió a escribir después
+  // (updatedAt fuera del rango). Antes, filtrando por updatedAt, desaparecía.
+  const conv = {
+    id: 'r', status: 'bot',
+    createdAt: at('2026-10-19T15:00:00Z'), resolvedAt: at('2026-10-19T16:00:00Z'), updatedAt: at('2026-10-25T12:00:00Z'),
+    messages: [
+      { role: 'user', timestamp: at('2026-10-19T15:00:00Z') },
+      { role: 'assistant', timestamp: at('2026-10-19T15:01:00Z') },
+      { role: 'user', timestamp: at('2026-10-25T12:00:00Z') },
+    ],
+  };
+  const r = aggregateConversations([conv], opts);
+  assert.equal(r.total, 1);
+  assert.equal(r.resolvedByBot, 1);
+});
+
+test('hadActivityInRange: un mensaje o un cambio de estado en el rango cuenta; nada en el rango, no', () => {
+  assert.equal(hadActivityInRange({ messages: [{ timestamp: at('2026-10-20T15:00:00Z') }] }, startMs, endMs), true);
+  assert.equal(hadActivityInRange({ escalatedAt: at('2026-10-20T15:00:00Z') }, startMs, endMs), true);
+  assert.equal(hadActivityInRange({ createdAt: at('2026-10-10T15:00:00Z'), updatedAt: at('2026-10-20T15:00:00Z') }, startMs, endMs), false);
 });

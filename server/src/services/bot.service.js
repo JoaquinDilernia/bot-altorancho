@@ -449,6 +449,9 @@ async function processIncomingMessageInternal(msg) {
       updateConversationStatus(from, 'bot'),
       updateHumanMode(from, false),
       updateAssignment(from, null),
+      // Arranca un ciclo nuevo: una derivación de una charla anterior no tiene
+      // que hacer que esta cuente como "resuelta por agente" (statsAggregate).
+      getDb().collection('bot-altorancho_conversations').doc(from).update({ cycleStartedAt: new Date() }),
       setMenuState(from, { menuShown: false, pendingMenuTopic: null }),
     ]);
     conversation.status = 'bot';
