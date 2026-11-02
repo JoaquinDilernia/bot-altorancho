@@ -354,11 +354,11 @@ export async function sendCampaign(campaignId, publicBaseUrl) {
         }
         const { params, urlButtonParam, headerImageId } = buildRecipientMessage({ campaign, contact, link, shortCode });
 
-        await getOrCreateConversation(contact.contactId, 'whatsapp', contact.contactName);
+        await getOrCreateConversation(contact.contactId, 'whatsapp', contact.contactName, { broadcast: true });
         const msgId = crypto.randomUUID();
         const prefix = `[Difusión: ${campaign.templateName}]${headerImageId ? ' [Imagen]' : ''}`;
         const templateText = params.filter(Boolean).length > 0 ? `${prefix} ${params.join(' | ')}` : prefix;
-        await appendMessage(contact.contactId, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', sentBy: campaign.createdBy });
+        await appendMessage(contact.contactId, { role: 'admin', content: templateText, msgId, msgStatus: 'sending', sentBy: campaign.createdBy }, { broadcast: true });
 
         let sendError = null;
         let waMsgId = null;

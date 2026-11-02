@@ -10,7 +10,9 @@ const COLLECTION = 'bot-altorancho_conversations';
 // 'urgent' is now a boolean flag (data.urgent), not a status
 // Legacy docs with status === 'urgent' are treated as status: 'bot', urgent: true
 
-export async function getOrCreateConversation(contactId, channel, contactName = null) {
+// broadcast: la crea una difusión. Sin updatedAt no entra en el listado del
+// panel (orderBy updatedAt) hasta que el cliente responda.
+export async function getOrCreateConversation(contactId, channel, contactName = null, { broadcast = false } = {}) {
   const db = getDb();
   const docRef = db.collection(COLLECTION).doc(contactId);
   const doc = await docRef.get();
@@ -39,7 +41,7 @@ export async function getOrCreateConversation(contactId, channel, contactName = 
     pendingMenuTopic: null,
     pendingLocalStore: null,
     createdAt: new Date(),
-    updatedAt: new Date(),
+    ...(broadcast ? {} : { updatedAt: new Date() }),
   };
 
   await docRef.set(newConversation);
@@ -47,7 +49,11 @@ export async function getOrCreateConversation(contactId, channel, contactName = 
   return { id: contactId, ...newConversation };
 }
 
-export async function appendMessage(contactId, message) {
+// broadcast: mensaje de una difusión. Queda en el historial del chat pero NO
+// toca updatedAt (si no, una difusión de miles de contactos llena las 200
+// conversaciones recientes del panel y los chats reales desaparecen) ni las
+// métricas de espera (no cuenta como respuesta del equipo).
+export async function appendMessage(contactId, message, { broadcast = false } = {}) {
   const db = getDb();
   const docRef = db.collection(COLLECTION).doc(contactId);
 
@@ -58,6 +64,11 @@ export async function appendMessage(contactId, message) {
   const stored = { ...rest, timestamp: new Date() };
   if (message.role === 'user' && messageId) stored.waMsgId = messageId;
   const updated = [...current, stored].slice(-200);
+
+  if (broadcast) {
+    await docRef.update({ messages: updated, lastBroadcastAt: new Date() });
+    return;
+  }
 
   const CRITICAL_THRESHOLD = 4;
 
