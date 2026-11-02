@@ -60,16 +60,19 @@ export async function getPickupOrders() {
   const { default: axios } = await import('axios');
   const allOrders = [];
 
-  // Fetch last 10 pages (500 orders) — enough for any active store
-  for (let page = 1; page <= 10; page++) {
+  // Solo pedidos ABIERTOS (los retirados/entregados pasan a closed), todos los
+  // que haya. Antes se traían los últimos 500 de cualquier estado: en el Cyber
+  // eso cubría 3 días y los retiros pendientes más viejos desaparecían.
+  const PER_PAGE = 200;
+  for (let page = 1; page <= 30; page++) {
     try {
       const { data } = await axios.get(`${TN_BASE}/orders`, {
         headers: TN_HEADERS,
-        params: { fields: PICKUP_FIELDS, per_page: 50, page },
+        params: { status: 'open', fields: PICKUP_FIELDS, per_page: PER_PAGE, page },
       });
       if (!data?.length) break;
       allOrders.push(...data);
-      if (data.length < 50) break;
+      if (data.length < PER_PAGE) break;
     } catch (err) {
       console.error('[notifications] TiendaNube fetch error page', page, err.message);
       break;
