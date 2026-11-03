@@ -8,6 +8,7 @@ import { createTemplate, syncTemplateStatus } from './template.service.js';
 import { TEMPLATE_VARS, sampleValues } from './templateVars.js';
 import { validateComposer, buildRecipientMessage, assertSendable, parseTestPhones, mergeContactsByPhone } from './campaignMessage.js';
 import { toWaContactId } from './phone.js';
+import { getPaidOrdersSince } from './tiendanube.service.js';
 import { addUtm, slugCampaign, attributeOrders, ATTRIBUTION_WINDOW_DAYS } from './attribution.js';
 
 const CAMPAIGNS = 'bot-altorancho_campaigns';
@@ -468,19 +469,51 @@ export async function computeCampaignAttribution(campaignId, { refreshClicked = 
   }
   const sends = await getCampaignSends(campaignId);
 
-  if (refreshClicked) {
-    for (const s of sends.filter(x => x.clickedAt)) {
-      await enrichCustomerFromTiendaNube(s.contactId, true)
-        .catch(err => console.error(`[attribution] No se pudo refrescar ${s.contactId}:`, err.message));
-    }
-    invalidateCustomersCache();
+  // Pedidos pagados de TN desde el primer envío: dan la hora exacta (las fichas
+  // viejas guardan solo el día) y dicen a quién hay que refrescar.
+  const orderTimes = new Map();
+  let paid = [];
+  const firstSentMs = Math.min(...sends.map(s => s.sentAt?.toDate?.()?.getTime() ?? Infinity));
+  if (Number.isFinite(firstSentMs)) {
+    paid = await getPaidOrdersSince(new Date(firstSentMs - 24 * 60 * 60 * 1000), { maxPages: 30 })
+      .catch(err => { console.error('[attribution] No se pudieron traer los pedidos de TN:', err.message); return []; });
+    for (const o of paid) if (o.created_at) orderTimes.set(String(o.number), o.created_at);
   }
 
-  const customers = mergeContactsByPhone(await listCustomers({}, { withOrders: true }));
-  const customersById = new Map();
-  for (const c of customers) customersById.set(c.contactId, c);
+  const loadCustomers = async () => {
+    const map = new Map();
+    for (const c of mergeContactsByPhone(await listCustomers({}, { withOrders: true }))) map.set(c.contactId, c);
+    return map;
+  };
+  let customersById = await loadCustomers();
 
-  const { buyers, summary } = attributeOrders({ sends, customersById, windowDays: ATTRIBUTION_WINDOW_DAYS });
+  if (refreshClicked) {
+    // Antes se re-consultaba en TN a cada uno que tocó el link (en el Cyber,
+    // ~1.500 de a uno → el pedido HTTP se cortaba). Ahora solo a los
+    // destinatarios que tienen un pedido pagado nuevo que su ficha no tiene.
+    const recipients = new Set(sends.map(s => s.contactId));
+    const stale = new Set();
+    for (const o of paid) {
+      const phones = [o.contact_phone, o.billing_phone, o.customer?.phone, o.shipping_address?.phone].filter(Boolean);
+      for (const p of phones) {
+        const id = toWaContactId(p);
+        if (!id || !recipients.has(id)) continue;
+        const known = (customersById.get(id)?.tnOrders ?? []).some(x => String(x.number) === String(o.number));
+        if (!known) stale.add(id);
+      }
+    }
+    const ids = [...stale];
+    for (let i = 0; i < ids.length; i += 5) {
+      await Promise.all(ids.slice(i, i + 5).map(id => enrichCustomerFromTiendaNube(id, true)
+        .catch(err => console.error(`[attribution] No se pudo refrescar ${id}:`, err.message))));
+    }
+    if (ids.length) {
+      invalidateCustomersCache();
+      customersById = await loadCustomers();
+    }
+  }
+
+  const { buyers, summary } = attributeOrders({ sends, customersById, windowDays: ATTRIBUTION_WINDOW_DAYS, orderTimes });
   const attribution = {
     ...summary,
     windowDays: ATTRIBUTION_WINDOW_DAYS,

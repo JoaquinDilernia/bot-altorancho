@@ -76,3 +76,21 @@ test('attributeOrders: contacto sin cliente en Tienda Nube', () => {
   const sends = [{ contactId: 'x', status: 'sent', sentAt: new Date(), clickedAt: null }];
   assert.equal(attributeOrders({ sends, customersById: new Map() }).summary.buyers, 0);
 });
+
+test('attributeOrders: con hora exacta no cuenta lo comprado antes de recibir el mensaje (mismo día)', () => {
+  const sends = [
+    { contactId: 'a', status: 'read', sentAt: new Date('2026-11-02T13:54:00Z'), clickedAt: null },
+    { contactId: 'b', status: 'read', sentAt: new Date('2026-11-02T13:54:00Z'), clickedAt: null },
+    { contactId: 'c', status: 'read', sentAt: new Date('2026-11-02T13:54:00Z'), clickedAt: null },
+  ];
+  const customersById = new Map([
+    ['a', { tnOrders: [order('2026-11-02', 1000, { createdAt: '2026-11-02T03:10:00+0000' })] }],
+    ['b', { tnOrders: [order('2026-11-02', 2000, { createdAt: '2026-11-02T18:00:00+0000' })] }],
+    // ficha vieja sin createdAt: la hora sale de orderTimes
+    ['c', { tnOrders: [order('2026-11-02', 3000, { number: 777 })] }],
+  ]);
+  const orderTimes = new Map([['777', '2026-11-02T09:00:00+0000']]);
+  const { summary } = attributeOrders({ sends, customersById, orderTimes });
+  assert.equal(summary.buyers, 1);
+  assert.equal(summary.revenue, 2000);
+});

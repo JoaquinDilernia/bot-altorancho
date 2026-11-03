@@ -55,13 +55,24 @@ function isCountable(o) {
   return o?.date && o.status !== 'cancelled' && o.paymentStatus === 'paid';
 }
 
+/** Hora exacta del pedido: la guardada en la ficha o, para fichas viejas, la que vino de TN. */
+function orderTime(o, orderTimes) {
+  return toDate(o.createdAt ?? orderTimes?.get(String(o.number)) ?? null);
+}
+
 /**
  * @param {object} p
  * @param {Array}  p.sends          filas de SENDS ({ contactId, contactName, status, sentAt, clickedAt })
  * @param {Map}    p.customersById  contactId canónico → cliente con tnOrders
  * @param {number} [p.windowDays]
+ * @param {Map}    [p.orderTimes]   número de pedido → created_at de TN, para
+ *                                  fichas guardadas antes de tener createdAt
+ *
+ * Con la hora exacta del pedido solo cuenta lo comprado DESPUÉS de recibir el
+ * mensaje (en un Cyber se compra desde las 00:00 y el día solo no alcanza).
+ * Sin hora, cae en la comparación por día.
  */
-export function attributeOrders({ sends, customersById, windowDays = ATTRIBUTION_WINDOW_DAYS }) {
+export function attributeOrders({ sends, customersById, windowDays = ATTRIBUTION_WINDOW_DAYS, orderTimes = null }) {
   const buyers = [];
   let recipients = 0;
   for (const s of sends ?? []) {
@@ -70,9 +81,15 @@ export function attributeOrders({ sends, customersById, windowDays = ATTRIBUTION
     recipients++;
     const from = dayString(sentAt);
     const to = addDays(from, windowDays);
+    const until = new Date(sentAt.getTime() + windowDays * 24 * 60 * 60 * 1000);
     const orders = (customersById.get(s.contactId)?.tnOrders ?? [])
-      .filter(o => isCountable(o) && o.date >= from && o.date <= to)
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .filter(o => {
+        if (!isCountable(o)) return false;
+        const at = orderTime(o, orderTimes);
+        if (at) return at >= sentAt && at <= until;
+        return o.date >= from && o.date <= to;
+      })
+      .sort((a, b) => (orderTime(a, orderTimes) ?? new Date(a.date)) - (orderTime(b, orderTimes) ?? new Date(b.date)));
     const first = orders[0];
     if (!first) continue;
     buyers.push({

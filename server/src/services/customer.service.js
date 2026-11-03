@@ -114,6 +114,7 @@ export async function enrichCustomerFromTiendaNube(contactId, forceRefresh = fal
   const tnOrders = (rawOrders ?? []).slice(0, 10).map(o => ({
     number: o.number,
     date: o.created_at?.split('T')[0] ?? null,
+    createdAt: o.created_at ?? null,
     status: o.status,
     paymentStatus: o.payment_status,
     shippingStatus: o.shipping_status,
@@ -148,6 +149,7 @@ export async function linkCustomerFromOrder(contactId, tnCustomer) {
   const tnOrders = (rawOrders ?? []).slice(0, 10).map(o => ({
     number: o.number,
     date: o.created_at?.split('T')[0] ?? null,
+    createdAt: o.created_at ?? null,
     status: o.status,
     paymentStatus: o.payment_status,
     shippingStatus: o.shipping_status,
@@ -628,6 +630,7 @@ function mapTnOrder(o) {
   return {
     number: o.number,
     date: o.created_at?.split('T')[0] ?? null,
+    createdAt: o.created_at ?? null,
     status: o.status,
     paymentStatus: o.payment_status,
     shippingStatus: o.shipping_status,
