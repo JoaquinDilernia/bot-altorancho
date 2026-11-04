@@ -181,7 +181,8 @@ const ORDER_TOPIC_FOLLOWUP = {
     local: 'Perfecto, pasame el número de comprobante para gestionar el cambio.',
   },
 };
-const STOCK_MENU_PROMPT = '¿Qué producto estás buscando?';
+const CHANGE_FORM_MESSAGE = 'Para gestionar tu cambio o devolución completá este formulario, ahí te pide todos los datos: https://forms.gle/Xva83vJgbx9GAooG8\n\nUna vez enviado, el equipo lo revisa y se comunica con vos. Tenés 30 días hábiles desde que recibiste el pedido. Podés ver la política completa acá: https://altorancho.com/politica-de-cambio-y-devolucion/';
+const STOCK_MENU_PROMPT ='¿Qué producto estás buscando?';
 const TALK_TO_AGENT_PROMPT = '¿Con qué equipo querés hablar?';
 const HORARIOS_FALLBACK = 'No tengo cargados los horarios en este momento. Te recomiendo chequear en https://altorancho.com/ o te derivo con el equipo si preferís.';
 
@@ -273,8 +274,18 @@ async function sendEntryMenu(to) {
 async function handleMenuInteraction({ from, channel, interactiveId, conversation, departments, botConfig }) {
   if (channel !== 'whatsapp') return false;
 
-  if (interactiveId === 'menu_order_status' || interactiveId === 'menu_order_change') {
-    const topic = interactiveId === 'menu_order_status' ? 'order_status' : 'order_change';
+  // Cambios y devoluciones se gestionan 100% con el formulario (pide pedido,
+  // producto, motivo, etc.) — no hay que pedir datos ni derivar.
+  if (interactiveId === 'menu_order_change') {
+    await setMenuState(from, { pendingMenuTopic: null });
+    await appendMessage(from, { role: 'assistant', content: CHANGE_FORM_MESSAGE });
+    await sendWhatsAppMessage(from, CHANGE_FORM_MESSAGE)
+      .catch(err => console.error('[bot] Error enviando formulario de cambios:', err.message));
+    return true;
+  }
+
+  if (interactiveId === 'menu_order_status') {
+    const topic = 'order_status';
     await setMenuState(from, { pendingMenuTopic: topic });
     await appendMessage(from, { role: 'assistant', content: WEB_LOCAL_PROMPT });
     await sendWhatsAppInteractiveButtons(from, WEB_LOCAL_PROMPT, WEB_LOCAL_BUTTONS)

@@ -1571,7 +1571,19 @@ export default function Conversations() {
     ? hoursAgo(selected.lastClientMessageAt)
     : null;
   // Computed: client hasn't written in >24h (window likely expired)
-  const computedWindowExpired = isHuman && lastClientHours !== null && lastClientHours > 24;
+  // Cliente que nunca escribió (ej: solo recibió una difusión): no hay ventana,
+  // solo se puede mandar plantilla. Se mira también el historial por si es un
+  // chat viejo sin lastClientMessageAt pero con mensajes del cliente.
+  const neverWrote = selected?.channel === 'whatsapp' && lastClientHours === null
+    && !messagesLoading && !messages.some(m => m.role === 'user');
+  // Meta rechazó el último envío del agente por ventana cerrada (131047): el
+  // timestamp puede no reflejarlo (el rechazo llega por webhook, no en la
+  // respuesta del POST), así que lo tomamos como ventana cerrada.
+  const lastAdminMsg = [...messages].reverse().find(m => m.role === 'admin' || m.role === 'user');
+  const lastSendRejected = lastAdminMsg?.role === 'admin' && /^131047/.test(String(lastAdminMsg.msgError ?? ''));
+  const computedWindowExpired = isHuman && (
+    (lastClientHours !== null && lastClientHours > 24) || neverWrote || lastSendRejected
+  );
   // Combined: either computed from timestamp OR detected from API error response
   const isWindowExpired = computedWindowExpired || apiWindowError;
   // Warning shown when window is approaching (>20h) but not yet expired
