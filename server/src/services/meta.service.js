@@ -196,6 +196,37 @@ export async function sendInstagramMessage(recipientId, text) {
   return data.message_id ?? null;
 }
 
+// El webhook de IG solo trae el id del cliente (IGSID); el nombre y el
+// @usuario hay que pedirlos aparte. "sylvie (@sylvierossi16)" o "@usuario".
+export function formatInstagramName({ name, username } = {}) {
+  const n = name?.trim();
+  const u = username?.trim();
+  if (n && u) return `${n} (@${u})`;
+  if (u) return `@${u}`;
+  return n || null;
+}
+
+const igProfileCache = new Map();
+
+export async function getInstagramContactName(igsid) {
+  if (!igsid || !hasInstagramLoginToken()) return null;
+  if (igProfileCache.has(igsid)) return igProfileCache.get(igsid);
+  try {
+    const token = await getInstagramToken();
+    const { data } = await axios.get(`${INSTAGRAM_API_URL}/${igsid}`, {
+      params: { fields: 'name,username' },
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 5000,
+    });
+    const display = formatInstagramName(data);
+    if (display) igProfileCache.set(igsid, display);
+    return display;
+  } catch (err) {
+    console.error(`[meta] No se pudo leer el perfil de IG ${igsid}:`, err.response?.data?.error?.message ?? err.message);
+    return null;
+  }
+}
+
 export async function downloadMediaAsBase64(mediaId) {
   if (!process.env.META_ACCESS_TOKEN) return null;
   try {
@@ -567,7 +598,7 @@ export function parseInstagramMessage(webhookBody) {
       type: imageAttachment ? 'image' : (attachments.length ? attachments[0].type : 'text'),
       mediaUrl: imageAttachment?.payload?.url ?? null,
       timestamp: messaging.timestamp,
-      contactName: 'Cliente',
+      contactName: null,
     };
   } catch {
     return null;

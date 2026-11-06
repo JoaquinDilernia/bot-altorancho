@@ -19,8 +19,11 @@ export async function getOrCreateConversation(contactId, channel, contactName = 
 
   if (doc.exists) {
     const data = doc.data();
-    if (contactName && !data.contactName) {
+    // "Cliente" era el nombre fijo que se guardaba antes para IG: se pisa
+    // apenas tengamos el nombre real.
+    if (contactName && (!data.contactName || data.contactName === 'Cliente')) {
       await docRef.update({ contactName });
+      data.contactName = contactName;
     }
     return { id: doc.id, ...data };
   }

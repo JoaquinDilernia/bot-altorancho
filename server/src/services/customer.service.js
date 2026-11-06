@@ -26,7 +26,8 @@ export async function getOrCreateCustomer(contactId, channel, contactName = null
 
   if (doc.exists) {
     const updates = { lastContactAt: new Date() };
-    if (contactName && !doc.data().contactName) updates.contactName = contactName;
+    const current = doc.data().contactName;
+    if (contactName && (!current || current === 'Cliente')) updates.contactName = contactName;
     await docRef.update(updates);
     return { id: doc.id, ...doc.data(), ...updates };
   }
@@ -176,7 +177,9 @@ export function buildCustomerContext(customer) {
   if (!customer) return null;
 
   const lines = [];
-  if (customer.contactName) lines.push(`Nombre: ${customer.contactName}`);
+  // En IG se guarda "nombre (@usuario)": al bot le pasamos solo el nombre.
+  const botName = customer.contactName?.replace(/\s*\(@[^)]*\)\s*$/, '').trim();
+  if (botName && botName !== 'Cliente') lines.push(`Nombre: ${botName}`);
   if (customer.tnEmail) lines.push(`Email: ${customer.tnEmail}`);
   lines.push(`Canal: ${customer.channel}`);
   if (customer.firstContactAt) lines.push(`Primera consulta: ${formatDate(customer.firstContactAt)}`);
