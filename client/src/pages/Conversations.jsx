@@ -333,10 +333,14 @@ function MessageBubble({
   // Alto guarda el nombre del agente en cada mensaje (`agentName`).
   const agentLabel = msg.agentName || nameMap[msg.agentEmail] || 'Agente';
   const token = localStorage.getItem('altorancho_token');
-  // WhatsApp → proxy del backend por mediaId (Instagram no guarda el archivo).
+  // WhatsApp → proxy del backend por mediaId. Instagram → copia propia en
+  // Storage (storagePath), porque la URL del CDN de IG vence.
+  const tokenQs = `token=${encodeURIComponent(token ?? '')}`;
   const mediaProxyUrl = msg.mediaId
-    ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?token=${encodeURIComponent(token ?? '')}`
-    : (msg.mediaUrl ?? null);
+    ? `${BASE_URL}/api/conversations/media/${msg.mediaId}?${tokenQs}`
+    : msg.storagePath
+      ? `${BASE_URL}/api/conversations/media-file?path=${encodeURIComponent(msg.storagePath)}&${tokenQs}`
+      : (msg.mediaUrl ?? null);
   const hasVisibleMedia = !!mediaProxyUrl && ['image', 'audio', 'video', 'document', 'sticker'].includes(msg.mediaType);
   const shownText = hasVisibleMedia ? mediaCaption(msg.content) : msg.content;
   const forwardable = isForwardable(msg);
@@ -1581,13 +1585,17 @@ export default function Conversations() {
   // respuesta del POST), así que lo tomamos como ventana cerrada.
   const lastAdminMsg = [...messages].reverse().find(m => m.role === 'admin' || m.role === 'user');
   const lastSendRejected = lastAdminMsg?.role === 'admin' && /^131047/.test(String(lastAdminMsg.msgError ?? ''));
+  // Instagram: 7 días (los agentes responden con la etiqueta HUMAN_AGENT de
+  // Meta) y no hay plantillas — vencida, solo se espera a que el cliente escriba.
+  const isIgChat = selected?.channel === 'instagram';
+  const windowHours = isIgChat ? 7 * 24 : 24;
   const computedWindowExpired = isHuman && (
-    (lastClientHours !== null && lastClientHours > 24) || neverWrote || lastSendRejected
+    (lastClientHours !== null && lastClientHours > windowHours) || neverWrote || (!isIgChat && lastSendRejected)
   );
   // Combined: either computed from timestamp OR detected from API error response
-  const isWindowExpired = computedWindowExpired || apiWindowError;
+  const isWindowExpired = computedWindowExpired || (!isIgChat && apiWindowError);
   // Warning shown when window is approaching (>20h) but not yet expired
-  const windowApproaching = isHuman && lastClientHours !== null && lastClientHours > 20 && !isWindowExpired;
+  const windowApproaching = isHuman && lastClientHours !== null && lastClientHours > windowHours - (isIgChat ? 24 : 4) && !isWindowExpired;
   // Clear apiWindowError when the window re-opens (client responds and lastClientHours resets)
   if (apiWindowError && !computedWindowExpired && lastClientHours !== null && lastClientHours < 1) {
     setApiWindowError(false);
@@ -2033,6 +2041,21 @@ export default function Conversations() {
                   ↩ Reabrir al Bot
                 </button>
               </div>
+            ) : isWindowExpired && isIgChat ? (
+              /* ---- Instagram: no hay plantillas, solo esperar al cliente ---- */
+              <div className={styles.windowExpiredPanel}>
+                <div className={styles.windowExpiredHeader}>
+                  <span className={styles.windowExpiredIcon}>⛔</span>
+                  <div>
+                    <p className={styles.windowExpiredTitle}>Ventana de Instagram expirada</p>
+                    <p className={styles.windowExpiredDesc}>
+                      El cliente no escribió en los últimos {Math.floor(lastClientHours / 24)} días. Meta solo permite responder por Instagram
+                      hasta 7 días después del último mensaje del cliente, y en Instagram <strong>no existen las plantillas</strong>.
+                      Cuando el cliente vuelva a escribir se habilita de nuevo.
+                    </p>
+                  </div>
+                </div>
+              </div>
             ) : isWindowExpired ? (
               /* ---- Window expired: block text, force template ---- */
               <div className={styles.windowExpiredPanel}>
@@ -2145,7 +2168,9 @@ export default function Conversations() {
                 )}
                 {windowApproaching && (
                   <div className={styles.windowWarning}>
-                    ⚠️ El cliente no escribe hace {Math.floor(lastClientHours)}h. La ventana de WhatsApp de 24h está por cerrarse — si no responde pronto, los mensajes dejarán de llegar.
+                    {isIgChat
+                      ? <>⚠️ El cliente no escribe hace {Math.floor(lastClientHours / 24)} días. La ventana de Instagram (7 días) está por cerrarse — después no se le puede escribir hasta que vuelva a mandar un mensaje.</>
+                      : <>⚠️ El cliente no escribe hace {Math.floor(lastClientHours)}h. La ventana de WhatsApp de 24h está por cerrarse — si no responde pronto, los mensajes dejarán de llegar.</>}
                   </div>
                 )}
                 {pendingFile ? (

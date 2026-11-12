@@ -164,36 +164,64 @@ async function resolveInstagramPage() {
 // con Instagram (graph.instagram.com) — es la que tiene acceso avanzado y
 // llega a cualquier cliente. Sin él, queda el flujo viejo vía página de
 // Facebook, que solo funciona con cuentas que tienen rol en la app.
-export async function sendInstagramMessage(recipientId, text) {
+//
+// `humanAgent`: manda con la etiqueta HUMAN_AGENT, que permite responder hasta
+// 7 días después del último mensaje del cliente (sin ella son 24 h). Solo para
+// mensajes escritos por una persona del equipo, nunca del bot (política de
+// Meta), y requiere el permiso "Human Agent" aprobado en la app.
+async function postInstagramMessage(recipientId, message, { humanAgent = false } = {}) {
+  const tagFields = humanAgent
+    ? { messaging_type: 'MESSAGE_TAG', tag: 'HUMAN_AGENT' }
+    : { messaging_type: 'RESPONSE' };
   if (hasInstagramLoginToken()) {
     const token = await getInstagramToken();
     const { data } = await postWithSafeRetry(
       `${INSTAGRAM_API_URL}/me/messages`,
-      { recipient: { id: recipientId }, message: { text } },
+      { recipient: { id: recipientId }, message, ...(humanAgent && tagFields) },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     return data.message_id ?? null;
   }
   if (!process.env.META_ACCESS_TOKEN || !process.env.META_IG_PAGE_ID) {
-    console.log('[meta] sendInstagramMessage skipped — tokens not configured');
+    console.log('[meta] envío por Instagram omitido — tokens no configurados');
     return null;
   }
   const { pageId, token } = await resolveInstagramPage();
   const { data } = await postWithSafeRetry(
     `${META_API_URL}/${pageId}/messages`,
-    {
-      recipient: { id: recipientId },
-      message: { text },
-      messaging_type: 'RESPONSE',
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    }
+    { recipient: { id: recipientId }, message, ...tagFields },
+    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
   );
   return data.message_id ?? null;
+}
+
+export async function sendInstagramMessage(recipientId, text, opts = {}) {
+  return postInstagramMessage(recipientId, { text }, opts);
+}
+
+// Adjunto por URL pública (la API de IG no acepta subir el archivo directo).
+// type: image | audio | video | file.
+export async function sendInstagramAttachment(recipientId, type, url, opts = {}) {
+  return postInstagramMessage(recipientId, { attachment: { type, payload: { url } } }, opts);
+}
+
+// Error de Meta por mensaje fuera de la ventana permitida (24 h, o 7 días con
+// HUMAN_AGENT). Code 10 + subcode 2534022 en la Messenger Platform.
+export function isInstagramWindowError(err) {
+  const e = err?.response?.data?.error ?? {};
+  return e.error_subcode === 2534022 || /outside of (the )?allowed window/i.test(e.message ?? '');
+}
+
+// Envío de un agente: primero normal (funciona aunque Meta todavía no haya
+// aprobado "Human Agent"); si Meta lo rechaza por ventana vencida, reintenta
+// con HUMAN_AGENT para llegar hasta los 7 días.
+export async function sendInstagramAsAgent(send) {
+  try {
+    return await send({ humanAgent: false });
+  } catch (err) {
+    if (!isInstagramWindowError(err)) throw err;
+    return send({ humanAgent: true });
+  }
 }
 
 // El webhook de IG solo trae el id del cliente (IGSID); el nombre y el
@@ -589,14 +617,17 @@ export function parseInstagramMessage(webhookBody) {
 
     const attachments = messaging.message.attachments ?? [];
     const imageAttachment = attachments.find(a => a.type === 'image');
+    const mainAttachment = imageAttachment ?? attachments[0];
+    // IG llama "file" a los documentos; el resto del bot usa "document".
+    const igType = mainAttachment?.type === 'file' ? 'document' : mainAttachment?.type;
 
     return {
       channel: 'instagram',
       from: messaging.sender.id,
       messageId: messaging.message.mid,
       text: messaging.message.text ?? '',
-      type: imageAttachment ? 'image' : (attachments.length ? attachments[0].type : 'text'),
-      mediaUrl: imageAttachment?.payload?.url ?? null,
+      type: igType ?? 'text',
+      mediaUrl: mainAttachment?.payload?.url ?? null,
       timestamp: messaging.timestamp,
       contactName: null,
     };

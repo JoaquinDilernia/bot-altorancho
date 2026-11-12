@@ -29,7 +29,11 @@ import {
   ensureWhatsAppImageSize,
   getMetaMediaStream,
   downloadMetaMedia,
+  sendInstagramAttachment,
+  sendInstagramAsAgent,
+  isInstagramWindowError,
 } from '../services/meta.service.js';
+import { saveMedia, signedMediaUrl, streamStoredMedia, isOwnMediaPath } from '../services/mediaStore.js';
 import { transcribeAudio } from '../services/transcription.service.js';
 import { createLabel } from '../services/label.service.js';
 import { getDb } from '../services/firebase.service.js';
@@ -55,6 +59,17 @@ router.get('/media/:mediaId', async (req, res) => {
     await getMetaMediaStream(req.params.mediaId, res);
   } catch (err) {
     if (!res.headersSent) res.status(502).json({ error: err.message });
+  }
+});
+
+// Archivos de Instagram guardados en Storage (ver mediaStore.js).
+router.get('/media-file', async (req, res) => {
+  const path = String(req.query.path ?? '');
+  if (!isOwnMediaPath(path)) return res.status(400).json({ error: 'Ruta inválida' });
+  try {
+    await streamStoredMedia(path, res);
+  } catch (err) {
+    if (!res.headersSent) res.status(err.code === 404 ? 404 : 502).json({ error: err.message });
   }
 });
 
@@ -282,6 +297,14 @@ router.post('/:contactId/read', async (req, res) => {
 // Meta error codes that indicate the 24h customer service window has expired
 const WA_WINDOW_EXPIRED_CODES = new Set([131047, 131026, 132000, 130429]);
 
+// Instagram no tiene plantillas: pasados los 7 días (HUMAN_AGENT) solo se
+// puede volver a escribir cuando el cliente manda un mensaje.
+const IG_WINDOW_EXPIRED_MSG = 'Pasaron más de 7 días desde el último mensaje del cliente por Instagram. Meta no permite escribirle (en Instagram no hay plantillas) hasta que el cliente vuelva a mandar un mensaje.';
+
+function igSendErrorMessage(err, detail) {
+  return isInstagramWindowError(err) ? IG_WINDOW_EXPIRED_MSG : `Guardado en panel pero falló el envío: ${detail}`;
+}
+
 function isWindowExpiredError(sendErr) {
   const code = sendErr.response?.data?.error?.code;
   const msg = sendErr.response?.data?.error?.message ?? '';
@@ -340,13 +363,14 @@ router.post('/:contactId/reply', async (req, res) => {
       if (channel === 'whatsapp') {
         waMsgId = await sendWhatsAppMessage(contactId, message.trim(), replyTo?.waMsgId ?? null);
       } else if (channel === 'instagram') {
-        await sendInstagramMessage(contactId, message.trim());
+        await sendInstagramAsAgent(opts => sendInstagramMessage(contactId, message.trim(), opts));
       }
     } catch (sendErr) {
       windowExpired = channel === 'whatsapp' && isWindowExpiredError(sendErr);
       const detail = sendErr.response?.data ?? sendErr.message;
       console.error('[reply] Error enviando por canal:', JSON.stringify(detail));
       sendError = typeof detail === 'object' ? JSON.stringify(detail) : detail;
+      if (channel === 'instagram') sendError = igSendErrorMessage(sendErr, sendError);
     }
 
     // Update message delivery status
@@ -356,7 +380,7 @@ router.post('/:contactId/reply', async (req, res) => {
       return res.status(502).json({
         error: windowExpired
           ? 'La ventana de WhatsApp de 24hs expiró. Necesitás enviar una plantilla aprobada para retomar la conversación.'
-          : `Guardado en panel pero falló el envío: ${sendError}`,
+          : channel === 'instagram' ? sendError : `Guardado en panel pero falló el envío: ${sendError}`,
         windowExpired,
       });
     }
@@ -442,8 +466,16 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
     let windowExpired = false;
     let metaMediaId = null;
     let waMsgId = null;
+    let storagePath = null;
     try {
-      if (channel === 'whatsapp') {
+      if (channel === 'instagram') {
+        // IG solo acepta adjuntos por URL pública: lo guardamos y le pasamos
+        // una URL firmada. La copia queda para mostrarlo en el panel.
+        storagePath = await saveMedia(buffer, mimetype);
+        const url = await signedMediaUrl(storagePath);
+        const igType = mediaType === 'document' ? 'file' : mediaType;
+        await sendInstagramAsAgent(opts => sendInstagramAttachment(contactId, igType, url, opts));
+      } else if (channel === 'whatsapp') {
         const { buffer: uploadBuffer, mimeType: uploadMimetype } = mediaType === 'image'
           ? await ensureWhatsAppImageSize(buffer, mimetype)
           : { buffer, mimeType: mimetype };
@@ -455,6 +487,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       const detail = sendErr.response?.data ?? sendErr.message;
       console.error('[media] Error enviando media:', JSON.stringify(detail));
       sendError = typeof detail === 'object' ? JSON.stringify(detail) : detail;
+      if (channel === 'instagram') sendError = igSendErrorMessage(sendErr, sendError);
     }
 
     const label = mediaType === 'audio' ? '[Audio enviado]'
@@ -467,6 +500,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       content: label,
       mediaType,
       mediaId: metaMediaId ?? null,
+      ...(storagePath && { storagePath }),
       fileName: originalname,
       msgId,
       msgStatus: sendError ? 'error' : 'sent',
@@ -479,7 +513,7 @@ router.post('/:contactId/media', upload.single('file'), async (req, res) => {
       return res.status(502).json({
         error: windowExpired
           ? 'La ventana de WhatsApp de 24hs expiró. Necesitás enviar una plantilla aprobada para retomar la conversación.'
-          : `Guardado en panel pero falló el envío: ${sendError}`,
+          : channel === 'instagram' ? sendError : `Guardado en panel pero falló el envío: ${sendError}`,
         windowExpired,
       });
     }

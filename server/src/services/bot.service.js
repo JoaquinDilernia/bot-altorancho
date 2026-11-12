@@ -1,4 +1,5 @@
 import { parseReasonMarker } from './escalationReasons.js';
+import { persistRemoteMedia } from './mediaStore.js';
 import { generateBotResponse } from './claude.service.js';
 import { getKnowledgeBasePrompt, getKnowledgeItemByTitle } from './knowledge.service.js';
 import {
@@ -495,11 +496,14 @@ async function processIncomingMessageInternal(msg) {
         document: '[Archivo recibido]',
         sticker:  '[Sticker]',
       };
+      // Instagram: copia propia del archivo (la URL de su CDN vence).
+      const stored = channel === 'instagram' && mediaUrl ? await persistRemoteMedia(mediaUrl) : null;
       await appendMessage(from, {
         role: 'user',
         content: contentMap[type],
         mediaType: type,
         mediaId: mediaId ?? null,
+        ...(stored && { storagePath: stored.path }),
         contactName,
         messageId,
         ...(replyTo && { replyTo }),
@@ -542,6 +546,13 @@ async function processIncomingMessageInternal(msg) {
   }
 
   // --- Non-text type handling ---
+  // Instagram solo manda una URL de CDN que vence en días: guardamos copia
+  // propia para que el panel pueda mostrar el archivo (WhatsApp usa mediaId).
+  let igStored = null;
+  if (channel === 'instagram' && mediaUrl && ['image', 'audio', 'document'].includes(type)) {
+    igStored = await persistRemoteMedia(mediaUrl);
+  }
+  const storageField = igStored ? { storagePath: igStored.path } : {};
   // Audio: se transcribe (Whisper) y sigue el flujo normal como si fuera
   // texto. Solo si la transcripción falla se cae al aviso de "no puedo
   // escucharlo" de antes.
@@ -549,7 +560,7 @@ async function processIncomingMessageInternal(msg) {
   if (type === 'audio') {
     const transcript = await transcribeIncomingAudio({ mediaId, mediaUrl });
     if (transcript) {
-      await appendMessage(from, { role: 'user', content: '[Audio recibido]', transcript, mediaType: 'audio', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+      await appendMessage(from, { role: 'user', content: '[Audio recibido]', transcript, mediaType: 'audio', mediaId: mediaId ?? null, ...storageField, contactName, messageId, ...(replyTo && { replyTo }) });
       text = `[Audio transcripto] ${transcript}`;
       audioSaved = true;
       console.log(`[bot] Audio de ${from} transcripto (${transcript.length} chars)`);
@@ -558,7 +569,7 @@ async function processIncomingMessageInternal(msg) {
   if (type === 'audio' && !audioSaved) {
     const prevAudios = history.filter(m => m.role === 'user' && m.mediaType === 'audio').length;
     const audioUserMsg = '[Audio recibido]';
-    await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+    await appendMessage(from, { role: 'user', content: audioUserMsg, mediaType: 'audio', mediaId: mediaId ?? null, ...storageField, contactName, messageId, ...(replyTo && { replyTo }) });
 
     let reply;
     if (prevAudios >= 1) {
@@ -581,7 +592,7 @@ async function processIncomingMessageInternal(msg) {
     const reply = 'Recibí un archivo, pero no puedo procesarlo directamente. ¿Podés contarme por escrito en qué te ayudo?';
     // mediaId se guardaba acá antes — sin él, el archivo (ej: un PDF) quedaba
     // imposible de ver o descargar después desde el panel.
-    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', mediaType: 'document', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+    await appendMessage(from, { role: 'user', content: '[Archivo recibido]', mediaType: 'document', mediaId: mediaId ?? null, ...storageField, contactName, messageId, ...(replyTo && { replyTo }) });
     await appendMessage(from, { role: 'assistant', content: reply });
     if (channel === 'whatsapp') await sendWhatsAppMessage(from, reply);
     else if (channel === 'instagram') await sendInstagramMessage(from, reply);
@@ -593,6 +604,8 @@ async function processIncomingMessageInternal(msg) {
   if (type === 'image') {
     if (mediaId) {
       imageData = await downloadMediaAsBase64(mediaId).catch(() => null);
+    } else if (igStored?.mimeType?.startsWith('image/')) {
+      imageData = { base64: igStored.buffer.toString('base64'), mimeType: igStored.mimeType };
     } else if (mediaUrl) {
       try {
         const axios = (await import('axios')).default;
@@ -601,7 +614,7 @@ async function processIncomingMessageInternal(msg) {
       } catch { /* continue without image */ }
     }
     const userContent = text?.trim() ? `[Imagen] ${text}` : '[Imagen recibida]';
-    await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', mediaId: mediaId ?? null, contactName, messageId, ...(replyTo && { replyTo }) });
+    await appendMessage(from, { role: 'user', content: userContent, mediaType: 'image', mediaId: mediaId ?? null, ...storageField, contactName, messageId, ...(replyTo && { replyTo }) });
   } else if (!audioSaved) {
     if (!text?.trim()) return;
     await appendMessage(from, { role: 'user', content: text, contactName, messageId, ...(replyTo && { replyTo }) });
