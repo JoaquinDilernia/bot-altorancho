@@ -206,11 +206,23 @@ export function isWithinBusinessHours(botConfig = {}) {
   return isWithinBusinessHoursAt(new Date(), botConfig);
 }
 
+const DEFAULT_HIGH_DEMAND_MESSAGE = '⚠️ Estamos con mucha demanda de consultas, así que los tiempos de respuesta pueden demorarse más de lo habitual. Te vamos a responder lo antes posible, en el orden en que llegaron los mensajes. ¡Gracias por tu paciencia!';
+
 function buildEscalationMessage(deptName, botConfig = {}) {
   const within = isWithinBusinessHours(botConfig);
   const startH = botConfig.businessHoursStart ?? 9;
   const endH   = botConfig.businessHoursEnd   ?? 18;
   const hoursStr = `${startH}:00 a ${endH}:00hs, lunes a viernes`;
+
+  // Aviso de alta demanda (toggle en Config): reemplaza el "en breve" por el
+  // aviso de demoras, para no prometer una respuesta rápida que no va a pasar.
+  if (botConfig.highDemandNotice === true) {
+    const notice = (botConfig.highDemandMessage || '').trim() || DEFAULT_HIGH_DEMAND_MESSAGE;
+    const tail = within
+      ? `🕐 Horario de atención: ${hoursStr}.`
+      : `En este momento estamos fuera del horario de atención (${hoursStr}). Tu mensaje quedó registrado.`;
+    return `Tu consulta fue derivada a *${deptName}* 👋\n\n${notice}\n\n${tail}`;
+  }
 
   if (within) {
     return `Tu consulta fue derivada a *${deptName}* 👋\n\nUn agente va a atenderte en breve. Por favor aguardá unos minutos.\n\n🕐 Horario de atención: ${hoursStr}.`;

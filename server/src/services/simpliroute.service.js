@@ -22,7 +22,9 @@ const TRACKING_URL_BASE = 'https://livetracking.simpliroute.com/widget/account/1
 const TEMPLATE_ON_ROUTE = 'pedido_en_camino_v2';
 const TEMPLATE_DELIVERED = 'pedido_entregado_v2';
 const TEMPLATE_FAILED = 'pedido_no_entregado';
-const TEMPLATE_SCHEDULED = 'pedido_programado';
+// v2 (2026-11-12): la vieja decía "entregado mañana" fijo; Logística ahora
+// tiene más días para entregar, así que la fecha va como variable {{2}}.
+const TEMPLATE_SCHEDULED = 'pedido_programado_v2';
 
 const SUCCESS_VALUES = new Set(['success', 'successful', 'exitoso', 'delivered', 'completed', 'complete']);
 const FAILED_VALUES = new Set(['failed', 'failure', 'fallido', 'undelivered', 'unsuccessful']);
@@ -106,6 +108,17 @@ export function buildTrackingUrl(payload, orderNumber) {
   return code ? `${TRACKING_URL_BASE}${encodeURIComponent(code)}` : null;
 }
 
+// "2026-11-13" (planned_date de la ruta en SimpliRoute) → "viernes 13/11".
+// Se arma a mediodía UTC para que ningún huso corra el día.
+const WEEKDAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+export function formatDeliveryDate(plannedDate) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(plannedDate ?? '').trim());
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12));
+  if (Number.isNaN(d.getTime()) || d.getUTCDate() !== +m[3]) return null;
+  return `${WEEKDAYS[d.getUTCDay()]} ${m[3]}/${m[2]}`;
+}
+
 // Resuelve teléfono + nombre del cliente de un envío, en orden de preferencia:
 //  1. el propio payload de SimpliRoute (contact_phone) — es el que la app de
 //     reparto tiene cargado y usa para su tracking
@@ -168,9 +181,18 @@ async function logSimpliRouteNotification(entry) {
 // Envía la plantilla correspondiente al cliente de un pedido. Reutilizado
 // tanto por el checkout (un pedido) como por el inicio de ruta (N pedidos).
 // `payload` es la visita (trae contact_phone, reference, etc.).
-async function notifyOrder(orderNumber, templateName, event, payload = {}, botConfig = {}, { includeTrackingButton = true } = {}) {
+async function notifyOrder(orderNumber, templateName, event, payload = {}, botConfig = {}, { includeTrackingButton = true, deliveryDate = undefined } = {}) {
   const trackingUrl = buildTrackingUrl(payload, orderNumber);
   const base = { event, templateName, orderNumber, trackingUrl: trackingUrl ?? null };
+
+  // Plantillas con fecha de entrega ({{2}}): sin fecha no se manda — mejor
+  // no avisar que avisar una fecha equivocada.
+  if (deliveryDate === null) {
+    console.warn(`[simpliroute] Pedido #${orderNumber}: la ruta no trae planned_date válida — no se envía "${templateName}"`);
+    await logSimpliRouteNotification({ ...base, status: 'skipped', reason: 'Ruta sin fecha de entrega (planned_date)' });
+    return;
+  }
+  if (deliveryDate) base.deliveryDate = deliveryDate;
 
   const contact = await resolveShipmentContact(payload, orderNumber);
   if (!contact) {
@@ -181,7 +203,7 @@ async function notifyOrder(orderNumber, templateName, event, payload = {}, botCo
   const { phone, name: customerName, source } = contact;
   base.source = source;
 
-  const bodyParams = [String(orderNumber)];
+  const bodyParams = deliveryDate ? [String(orderNumber), deliveryDate] : [String(orderNumber)];
   // El botón de seguimiento sólo se manda si está prendido en Config Y las
   // plantillas de Meta ya tienen el botón URL "Ver seguimiento" aprobado.
   // "Programado" (pedido_programado) no tiene botón — todavía no hay nada
@@ -197,7 +219,7 @@ async function notifyOrder(orderNumber, templateName, event, payload = {}, botCo
     await getOrCreateConversation(phone, 'whatsapp', customerName);
     await appendMessage(phone, {
       role: 'admin',
-      content: `[Plantilla: ${templateName}] pedido #${orderNumber}`,
+      content: `[Plantilla: ${templateName}] pedido #${orderNumber}${deliveryDate ? ` — entrega ${deliveryDate}` : ''}`,
       msgId,
       msgStatus: 'sending',
     });
@@ -259,13 +281,18 @@ async function notifyRouteVisits(payload, templateName, event, logLabel, notifyO
   }
 
   const botConfig = await getBotConfig();
+  // La fecha viene a nivel ruta (planned_date), no en cada visita.
+  const { withDeliveryDate, ...rest } = notifyOpts;
+  const opts = withDeliveryDate
+    ? { ...rest, deliveryDate: formatDeliveryDate(payload?.planned_date) }
+    : rest;
   for (const visit of visits) {
     const orderNumber = extractOrderNumber(visit);
     if (!orderNumber) {
       console.warn(`[simpliroute] ${logLabel}: visita sin número de pedido identificable:`, JSON.stringify(visit));
       continue;
     }
-    await notifyOrder(orderNumber, templateName, event, visit, botConfig, notifyOpts);
+    await notifyOrder(orderNumber, templateName, event, visit, botConfig, opts);
     await new Promise(r => setTimeout(r, 200)); // margen para no ráfagar la API de Meta
   }
 }
@@ -285,7 +312,7 @@ export async function handleSimpliRouteRouteStart(payload) {
 // Sin botón de seguimiento: todavía no hay nada que rastrear.
 export async function handleSimpliRouteScheduled(payload) {
   console.log('[simpliroute] programado (creación de ruta) payload recibido:', JSON.stringify(payload));
-  await notifyRouteVisits(payload, TEMPLATE_SCHEDULED, 'scheduled', 'programado', { includeTrackingButton: false });
+  await notifyRouteVisits(payload, TEMPLATE_SCHEDULED, 'scheduled', 'programado', { includeTrackingButton: false, withDeliveryDate: true });
 }
 
 // Últimos envíos disparados por SimpliRoute (enviados, con error, u

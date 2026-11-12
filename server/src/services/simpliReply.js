@@ -12,6 +12,7 @@ const MAX_AGE_MS = 72 * 60 * 60 * 1000;
 // trabadas en Meta) — un chat viejo puede tener cualquiera de los dos.
 const TEMPLATES = {
   pedido_programado: 'su pedido está programado para entrega',
+  pedido_programado_v2: 'su pedido está programado para entrega',
   pedido_en_camino: 'su pedido está en camino',
   pedido_en_camino_v2: 'su pedido está en camino',
   pedido_entregado: 'su pedido fue entregado',

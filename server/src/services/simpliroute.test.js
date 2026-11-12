@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveShipmentContact, buildTrackingUrl } from './simpliroute.service.js';
+import { resolveShipmentContact, buildTrackingUrl, formatDeliveryDate } from './simpliroute.service.js';
 
 // --- buildTrackingUrl ---
 
@@ -79,4 +79,22 @@ test('payload con teléfono vacío -> sigue al fallback', async () => {
     fakes({ findOrder: async () => ({ customer: { phone: '1149352595', name: 'Mayra' } }) }),
   );
   assert.equal(r.source, 'tiendanube');
+});
+
+// --- formatDeliveryDate ---
+
+test('formatDeliveryDate: planned_date de SimpliRoute → "viernes 13/11"', () => {
+  assert.equal(formatDeliveryDate('2026-11-13'), 'viernes 13/11');
+  assert.equal(formatDeliveryDate('2026-11-16'), 'lunes 16/11');
+});
+
+test('formatDeliveryDate: tolera fecha con hora', () => {
+  assert.equal(formatDeliveryDate('2026-11-14 10:04:51'), 'sábado 14/11');
+});
+
+test('formatDeliveryDate: inválida o vacía → null', () => {
+  assert.equal(formatDeliveryDate(null), null);
+  assert.equal(formatDeliveryDate(''), null);
+  assert.equal(formatDeliveryDate('mañana'), null);
+  assert.equal(formatDeliveryDate('2026-02-31'), null);
 });

@@ -179,6 +179,31 @@ export default function Config() {
           </div>
         </section>
 
+        {/* Alta demanda */}
+        <section className={styles.section}>
+          <div className={styles.sectionHead}>
+            <h2 className={styles.sectionTitle}>Aviso de alta demanda</h2>
+            <ToggleField
+              label="Avisar demoras al derivar"
+              checked={config.highDemandNotice === true}
+              onChange={(v) => setConfig({ ...config, highDemandNotice: v })}
+            />
+          </div>
+          <div className={styles.field}>
+            <textarea
+              className={styles.textarea}
+              value={config.highDemandMessage ?? ''}
+              onChange={(e) => setConfig({ ...config, highDemandMessage: e.target.value })}
+              rows={3}
+              placeholder="⚠️ Estamos con mucha demanda de consultas, así que los tiempos de respuesta pueden demorarse más de lo habitual. Te vamos a responder lo antes posible, en el orden en que llegaron los mensajes. ¡Gracias por tu paciencia!"
+            />
+            <p className={styles.hint}>
+              Con el interruptor prendido, cada vez que el bot deriva a un área le avisa al cliente que hay demoras (en lugar de "un agente va a atenderte en breve").
+              Si dejás el texto vacío se usa el de ejemplo. Apagalo cuando se normalice la demanda.
+            </p>
+          </div>
+        </section>
+
         {/* SimpliRoute */}
         <section className={styles.section}>
           <div className={styles.sectionHead}>
