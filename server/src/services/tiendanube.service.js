@@ -519,6 +519,17 @@ export function formatOrderStatus(order) {
  * @param {object} product - resultado crudo de searchProducts()
  * @returns {string|null}
  */
+// UTMs de los links de productos que manda el bot: así la venta queda como
+// "WhatsApp" en Reportes / TiendaNube y no como directo u orgánico.
+export const PRODUCT_UTM = { utm_source: 'whatsapp', utm_medium: 'bot', utm_campaign: 'producto_bot' };
+
+export function withProductUtm(link) {
+  let u;
+  try { u = new URL(link); } catch { return link; }
+  for (const [k, v] of Object.entries(PRODUCT_UTM)) u.searchParams.set(k, v);
+  return u.toString();
+}
+
 export function formatWebStock(product) {
   const variants = product?.variants ?? [];
   if (!variants.length) return null;
@@ -532,6 +543,6 @@ export function formatWebStock(product) {
     // variante_id es para armar_carrito — uso interno, no se le muestra al cliente.
     return `- ${label}: ${availability} [variante_id ${v.id}]`;
   });
-  const link = product.canonical_url ? `\nLink: ${product.canonical_url}` : '';
+  const link = product.canonical_url ? `\nLink: ${withProductUtm(product.canonical_url)}` : '';
   return `Disponibilidad en la tienda online (web) [producto_id ${product.id}]:${link}\n${lines.join('\n')}`;
 }
